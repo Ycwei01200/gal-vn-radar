@@ -25,11 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     fetch = subparsers.add_parser("fetch", help="Fetch, score, store, and notify new events")
-    fetch.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Render notifications without Telegram",
-    )
+    fetch.add_argument("--dry-run", action="store_true", help="Render notifications without Telegram")
     fetch.add_argument("--config", default="config.yaml", help="Path to YAML configuration")
     fetch.add_argument("--database", default="data/gal_radar.db", help="Path to SQLite database")
 
@@ -72,12 +68,20 @@ async def run_fetch(*, config_path: str, database_path: str, dry_run: bool) -> i
     config = load_config(config_path)
     store = _store(database_path)
     notifier = _notifier(dry_run)
-    adapters = [VNDBAdapter()]
-    if config.follow.steam_apps:
+    adapters = [
+        VNDBAdapter(
+            discovery_enabled=config.discovery.enabled,
+            discovery_results=config.discovery.vndb_results,
+            discover_steam=config.discovery.steam_from_vndb_extlinks,
+            discover_itch=config.discovery.itch_from_vndb_extlinks,
+            discover_feeds=config.discovery.feeds_from_vndb_extlinks,
+        )
+    ]
+    if config.discovery.enabled or config.follow.steam_apps:
         adapters.append(SteamNewsAdapter())
-    if config.follow.itch_apps:
+    if config.discovery.enabled or config.follow.itch_apps:
         adapters.append(ItchAdapter())
-    if config.follow.feeds:
+    if config.discovery.enabled or config.follow.feeds:
         adapters.append(RSSAdapter())
 
     pipeline = Pipeline(config=config, store=store, adapters=adapters, notifier=notifier)
@@ -132,8 +136,8 @@ def run_doctor(*, config_path: str, database_path: str) -> int:
         + len(config.follow.itch_apps)
         + len(config.follow.feeds)
     )
-    if source_count == 0:
-        warnings.append("no follow targets are configured")
+    if source_count == 0 and not config.discovery.enabled:
+        warnings.append("no follow targets are configured and auto-discovery is disabled")
     if not os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
         warnings.append("TELEGRAM_BOT_TOKEN is missing")
     if not os.getenv("TELEGRAM_CHAT_ID", "").strip():
