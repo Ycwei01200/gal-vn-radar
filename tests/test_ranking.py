@@ -70,3 +70,25 @@ def test_relevance_scoring_matches_resolved_developer_id_with_canonical_name() -
         "matched tag: nakige",
         "event type: RELEASE_DATE",
     )
+
+
+def test_auto_discovered_vn_promotes_important_events_but_not_other() -> None:
+    config = AppConfig()
+    config.follow.add_discovered_vn("v50000")
+
+    released = normalize_event(
+        SourceEvent(
+            source="steam",
+            source_event_id="123:released",
+            vn_id="v50000",
+            event_type=EventType.RELEASED,
+            title="Example VN",
+            url="https://example.com/released",
+        )
+    )
+    patch = released.model_copy(update={"event_type": EventType.PATCH})
+    other = released.model_copy(update={"event_type": EventType.OTHER})
+
+    assert score_event(released, config).score == 70
+    assert score_event(patch, config).score == 50
+    assert score_event(other, config).score == 0
