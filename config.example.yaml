@@ -8,6 +8,7 @@ follow:
     - denpa
     - nakige
     - utsuge
+  steam_apps: []
 
 preferences:
   languages:
