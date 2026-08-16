@@ -383,9 +383,13 @@ def _feed_urls(extlinks: list[_VNDBExtLink]) -> list[str]:
     urls: list[str] = []
     for link in extlinks:
         lowered = link.url.casefold()
-        if lowered.endswith((".rss", ".atom", ".xml")) or "/feed" in lowered or "rss" in lowered:
-            if link.url not in urls:
-                urls.append(link.url)
+        looks_like_feed = (
+            lowered.endswith((".rss", ".atom", ".xml"))
+            or "/feed" in lowered
+            or "rss" in lowered
+        )
+        if looks_like_feed and link.url not in urls:
+            urls.append(link.url)
     return urls
 
 
