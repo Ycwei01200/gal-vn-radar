@@ -35,7 +35,6 @@ def test_relevance_scoring_matches_resolved_developer_id_with_canonical_name() -
         {
             "follow": {
                 "developers": ["枕"],
-                "resolved_developer_ids": ["p30"],
                 "visual_novels": ["v20431"],
                 "tags": ["nakige"],
             },
@@ -45,6 +44,7 @@ def test_relevance_scoring_matches_resolved_developer_id_with_canonical_name() -
             },
         }
     )
+    app_config.follow.set_resolved_developer_ids(["p30"])
     event = normalize_event(
         SourceEvent(
             source="vndb",

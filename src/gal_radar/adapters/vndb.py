@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from typing import Any, Protocol, cast
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, ValidationError
 
 from gal_radar.adapters.base import SourceAdapterError
 from gal_radar.config import FollowConfig
@@ -42,7 +42,7 @@ class _VNDBTag(BaseModel):
 class _VNDBImage(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    url: str | None = None
+    url: HttpUrl | None = None
 
 
 class _VNDBVN(BaseModel):
@@ -136,7 +136,7 @@ class VNDBAdapter:
                     seen_vn_ids.add(vn.id)
                     vns.append(vn)
 
-        follow.resolved_developer_ids = resolved_developer_ids
+        follow.set_resolved_developer_ids(resolved_developer_ids)
         return [self._to_source_event(vn) for vn in vns]
 
     async def _query_vn(

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
 
 from gal_radar.models.event import EventType
 
@@ -13,9 +13,23 @@ class FollowConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     developers: list[str] = Field(default_factory=list)
-    resolved_developer_ids: list[str] = Field(default_factory=list)
     visual_novels: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    _resolved_developer_ids: list[str] = PrivateAttr(default_factory=list)
+
+    @property
+    def resolved_developer_ids(self) -> list[str]:
+        return list(self._resolved_developer_ids)
+
+    def set_resolved_developer_ids(self, developer_ids: list[str]) -> None:
+        resolved_ids: list[str] = []
+        seen_ids: set[str] = set()
+        for developer_id in developer_ids:
+            stripped = developer_id.strip()
+            if stripped and stripped not in seen_ids:
+                seen_ids.add(stripped)
+                resolved_ids.append(stripped)
+        self._resolved_developer_ids = resolved_ids
 
 
 class PreferencesConfig(BaseModel):

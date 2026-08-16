@@ -121,6 +121,35 @@ def test_malformed_vndb_response_raises_source_error() -> None:
     asyncio.run(run())
 
 
+def test_invalid_optional_vndb_image_url_raises_source_error() -> None:
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": "v20431",
+                            "title": "Sakura no Toki",
+                            "alttitle": "サクラノ刻",
+                            "released": "2026-10-30",
+                            "developers": [{"id": "p30", "name": "Makura"}],
+                            "image": {"url": "not-a-valid-url"},
+                            "tags": [],
+                        }
+                    ]
+                },
+                request=request,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = VNDBAdapter(client)
+            with pytest.raises(SourceAdapterError, match="Malformed VNDB /vn response"):
+                await adapter.fetch_events(FollowConfig(visual_novels=["v20431"]))
+
+    asyncio.run(run())
+
+
 def test_vndb_timeout_is_wrapped() -> None:
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
