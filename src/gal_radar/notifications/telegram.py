@@ -71,8 +71,6 @@ class TelegramNotifier:
             print(message, file=self._stdout)
             return False
 
-        # HTTPX includes the full request URL in INFO logs; this URL contains
-        # the Telegram bot token, so request logging must not expose it.
         _ensure_httpx_log_redaction()
         if self._client is not None:
             await self._send_with_fallback(self._client, message, image_url)
@@ -138,48 +136,48 @@ def _is_valid_image_url(value: str | None) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
-def render_zh_tw_notification(event: EventRecord) -> str:
+def render_zh_tw_notification(
+    event: EventRecord,
+    *,
+    source_priority: list[str] | None = None,
+) -> str:
     event_type = EventType(event.event_type)
-    lines = [_heading(event_type), "", f"《{event.title}》"]
+    lines = [_heading(event_type), f"《{event.title}》"]
     if event.developer_names:
         lines.append(f"開發商：{'、'.join(event.developer_names)}")
 
     release_date = event.metadata_json.get("release_date")
     if isinstance(release_date, str) and release_date:
-        lines.extend(["", _release_label(event_type), _format_release_date(release_date)])
+        lines.extend(["", f"{_release_label(event_type)}{_format_release_date(release_date)}"])
     elif event.summary:
         lines.extend(["", event.summary])
 
-    lines.extend(["", f"🔥 關聯度：{event.relevance_score}"])
+    lines.extend(["", f"關聯度：{event.relevance_score}"])
     if event.relevance_reasons:
-        lines.extend(["", "你可能會感興趣，因為："])
-        lines.extend(f"・{_translate_reason(reason)}" for reason in event.relevance_reasons)
+        reasons = "、".join(_translate_reason(reason) for reason in event.relevance_reasons)
+        lines.append(f"原因：{reasons}")
 
-    sources = [event.source]
-    for corroboration in getattr(event, "corroborating_sources", None) or []:
-        if "source" in corroboration and corroboration["source"] not in sources:
-            sources.append(corroboration["source"])
-    source_names = "、".join(_source_display(s) for s in sources)
-
-    lines.extend(["", f"來源：{source_names}", "🔗 查看來源", event.url])
+    source_names = "、".join(
+        _source_display(source) for source in _ordered_sources(event, source_priority)
+    )
+    lines.extend(["", f"來源：{source_names}", event.url])
     return "\n".join(lines)
 
 
-def render_zh_tw_digest(events: list[EventRecord]) -> str:
+def render_zh_tw_digest(
+    events: list[EventRecord],
+    *,
+    source_priority: list[str] | None = None,
+) -> str:
     if not events:
         return ""
-    lines = ["📚 今日 Gal/VN Radar 摘要\n"]
+    lines = ["📚 今日 Gal/VN Radar 摘要", ""]
     for i, event in enumerate(events, start=1):
         event_type = EventType(event.event_type)
-        
-        sources = [event.source]
-        for corroboration in getattr(event, "corroborating_sources", None) or []:
-            if "source" in corroboration and corroboration["source"] not in sources:
-                sources.append(corroboration["source"])
-        source_names = "、".join(_source_display(s) for s in sources)
-
-        lines.append(f"{i}. 《{event.title}》 (來源：{source_names})")
-        lines.append(_heading(event_type))
+        source_names = "、".join(
+            _source_display(source) for source in _ordered_sources(event, source_priority)
+        )
+        lines.append(f"{i}. 《{event.title}》｜{_heading(event_type)}")
 
         release_date = event.metadata_json.get("release_date")
         if isinstance(release_date, str) and release_date:
@@ -188,21 +186,35 @@ def render_zh_tw_digest(events: list[EventRecord]) -> str:
             lines.append(event.summary)
         else:
             lines.append("無詳細內容")
+        lines.append(f"來源：{source_names}")
         lines.append("")
     lines.append(f"共 {len(events)} 則你可能感興趣的情報。")
     return "\n".join(lines)
 
 
+def _ordered_sources(
+    event: EventRecord,
+    source_priority: list[str] | None = None,
+) -> list[str]:
+    sources = [event.source]
+    for corroboration in getattr(event, "corroborating_sources", None) or []:
+        source = corroboration.get("source")
+        if isinstance(source, str) and source not in sources:
+            sources.append(source)
+
+    if not source_priority:
+        return sources
+    priority = {source: index for index, source in enumerate(source_priority)}
+    return sorted(sources, key=lambda source: (priority.get(source, len(priority)), sources.index(source)))
+
+
 def _source_display(source: str) -> str:
-    if source == "vndb":
-        return "VNDB"
-    if source == "steam":
-        return "Steam"
-    if source == "rss":
-        return "官方 RSS"
-    if source == "itch.io":
-        return "itch.io"
-    return source
+    return {
+        "vndb": "VNDB",
+        "steam": "Steam",
+        "rss": "官方 RSS",
+        "itch.io": "itch.io",
+    }.get(source, source)
 
 
 def _heading(event_type: EventType) -> str:
@@ -226,7 +238,7 @@ def _release_label(event_type: EventType) -> str:
         return "發售日："
     if event_type is EventType.DELAY:
         return "更新後發售日："
-    return "📅 發售日更新"
+    return "發售日："
 
 
 def _format_release_date(value: str) -> str:
@@ -239,19 +251,19 @@ def _format_release_date(value: str) -> str:
 
 def _translate_reason(reason: str) -> str:
     if reason == "followed visual novel":
-        return "你正在追蹤這部作品"
+        return "追蹤中的作品"
     if reason.startswith("followed developer: "):
-        return f"你正在追蹤「{reason.removeprefix('followed developer: ')}」"
+        return f"追蹤開發商「{reason.removeprefix('followed developer: ')}」"
     if reason.startswith("matched tag: "):
-        return f"符合你偏好的「{reason.removeprefix('matched tag: ')}」標籤"
+        return f"偏好標籤「{reason.removeprefix('matched tag: ')}」"
     if reason == "event type: RELEASE_DATE":
-        return "這是一則發售日異動"
+        return "發售日異動"
     if reason == "event type: RELEASED":
-        return "這部作品已正式發售"
+        return "正式發售"
     if reason == "event type: NEW_TITLE":
-        return "這是一則新作情報"
+        return "新作情報"
     if reason == "event type: DEMO":
-        return "這是一則體驗版情報"
+        return "體驗版情報"
     if reason == "event type: DELAY":
-        return "這是一則發售延期情報"
+        return "發售延期"
     return reason
