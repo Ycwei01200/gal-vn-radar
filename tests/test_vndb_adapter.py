@@ -95,7 +95,8 @@ def test_vndb_developer_name_is_resolved_before_querying_vns() -> None:
         assert payloads["/kana/producer"]["filters"] == ["search", "=", "枕"]
         assert payloads["/kana/vn"]["filters"] == ["developer", "=", ["id", "=", "p30"]]
         assert payloads["/kana/vn"]["fields"] == (
-            "title,alttitle,released,developers{id,name},image{url},tags{id,name}"
+            "title,alttitle,released,developers{id,name},image{url},"
+            "tags{id,name},extlinks{name,id,url}"
         )
         assert follow.developers == ["枕"]
         assert follow.resolved_developer_ids == ["p30"]
@@ -104,6 +105,64 @@ def test_vndb_developer_name_is_resolved_before_querying_vns() -> None:
         assert events[0].developer_ids == ["p30"]
         assert events[0].developer_names == ["Makura"]
         assert str(events[0].image_url) == "https://t.vndb.org/cv/12/3456.jpg"
+
+    asyncio.run(run())
+
+
+def test_vndb_auto_discovery_builds_external_source_mappings() -> None:
+    async def run() -> None:
+        follow = FollowConfig()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content.decode("utf-8"))
+            assert payload["filters"] == []
+            assert payload["sort"] == "released"
+            assert payload["reverse"] is True
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": "v50000",
+                            "title": "Example VN",
+                            "released": "2026-09-01",
+                            "developers": [{"id": "p1", "name": "Example Dev"}],
+                            "tags": [],
+                            "extlinks": [
+                                {
+                                    "name": "steam",
+                                    "id": 123456,
+                                    "url": "https://store.steampowered.com/app/123456/",
+                                },
+                                {
+                                    "name": "itch",
+                                    "id": "example",
+                                    "url": "https://example.itch.io/example-vn",
+                                },
+                                {
+                                    "name": "website",
+                                    "id": "feed",
+                                    "url": "https://example.com/news/feed.xml",
+                                },
+                            ],
+                        }
+                    ]
+                },
+                request=request,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = VNDBAdapter(client, discovery_enabled=True, discovery_results=50)
+            events = await adapter.fetch_events(follow)
+
+        assert [event.vn_id for event in events] == ["v50000"]
+        assert follow.discovered_vn_ids == {"v50000"}
+        assert len(follow.steam_apps) == 1
+        assert follow.steam_apps[0].app_id == 123456
+        assert len(follow.itch_apps) == 1
+        assert str(follow.itch_apps[0].url).rstrip("/") == "https://example.itch.io/example-vn"
+        assert len(follow.feeds) == 1
+        assert str(follow.feeds[0].url) == "https://example.com/news/feed.xml"
 
     asyncio.run(run())
 
