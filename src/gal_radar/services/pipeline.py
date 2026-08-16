@@ -8,6 +8,7 @@ from gal_radar.database import EventRecord, EventStore
 from gal_radar.models.event import NotificationStatus, SourceEvent
 from gal_radar.notifications.base import NotificationSink
 from gal_radar.notifications.telegram import render_zh_tw_notification
+from gal_radar.services.change_detection import detect_change, snapshot_from_event
 from gal_radar.services.deduplicate import find_duplicate
 from gal_radar.services.normalize import normalize_event
 from gal_radar.services.ranking import score_event
@@ -34,9 +35,52 @@ class Pipeline:
         for adapter in self._adapters:
             source_events = await adapter.fetch_events(self._config.follow)
             logger.info("fetched %d events from %s", len(source_events), adapter.name)
+            if not self._store.is_baseline_initialized(adapter.name):
+                try:
+                    for source_event in source_events:
+                        self._store.save_snapshot(adapter.name, snapshot_from_event(source_event))
+                    self._store.mark_baseline_initialized(adapter.name)
+                except Exception:
+                    logger.exception(
+                        "source baseline initialization failed source=%s", adapter.name
+                    )
+                continue
+
             for source_event in source_events:
                 try:
-                    record = await self._process_one(source_event)
+                    previous = self._store.get_snapshot(
+                        adapter.name,
+                        source_event.vn_id or source_event.source_event_id,
+                    )
+                    changed_event = detect_change(previous, source_event, baseline_initialized=True)
+                    if changed_event is None:
+                        self._store.save_snapshot(adapter.name, snapshot_from_event(source_event))
+                        continue
+
+                    record = await self._process_one(changed_event)
+                    if record is None:
+                        normalized = normalize_event(changed_event)
+                        duplicate = find_duplicate(self._store, normalized)
+                        if duplicate is not None and duplicate.notification_status in {
+                            NotificationStatus.DIGEST.value,
+                            NotificationStatus.SKIPPED.value,
+                            NotificationStatus.SENT.value,
+                        }:
+                            self._store.save_snapshot(
+                                adapter.name,
+                                snapshot_from_event(source_event),
+                            )
+                        continue
+
+                    if record.notification_status in {
+                        NotificationStatus.DIGEST.value,
+                        NotificationStatus.SKIPPED.value,
+                        NotificationStatus.SENT.value,
+                    }:
+                        self._store.save_snapshot(
+                            adapter.name,
+                            snapshot_from_event(source_event),
+                        )
                 except Exception:
                     logger.exception(
                         "event processing failed source=%s source_event_id=%s",
