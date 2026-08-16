@@ -92,11 +92,23 @@ def test_telegram_bot_token_is_not_written_to_httpx_logs(caplog) -> None:
             return httpx.Response(200, json={"ok": True}, request=request)
 
         caplog.set_level(logging.INFO, logger="httpx")
+        httpx_logger = logging.getLogger("httpx")
+        level_before = httpx_logger.level
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             notifier = TelegramNotifier(bot_token="secret-token", chat_id="123", client=client)
             await notifier.send("message")
 
-        assert all("secret-token" not in record.getMessage() for record in caplog.records)
+        telegram_logs = [
+            record.getMessage()
+            for record in caplog.records
+            if "api.telegram.org" in record.getMessage()
+        ]
+        assert telegram_logs
+        assert all("secret-token" not in message for message in telegram_logs)
+        assert all(
+            "api.telegram.org/bot<redacted>/sendMessage" in message for message in telegram_logs
+        )
+        assert httpx_logger.level == level_before
 
     asyncio.run(run())
 

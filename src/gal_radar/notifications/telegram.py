@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from datetime import date
 from typing import Any, Protocol, TextIO
@@ -13,6 +14,33 @@ from gal_radar.models.event import EventType
 
 class _HttpClient(Protocol):
     async def post(self, url: str, **kwargs: Any) -> httpx.Response: ...
+
+
+_TELEGRAM_BOT_URL_PATTERN = re.compile(r"(https://api\.telegram\.org/bot)[^/\s\"']+")
+
+
+class _TelegramHttpxLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _redact_telegram_url(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(_redact_telegram_url(value) for value in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {key: _redact_telegram_url(value) for key, value in record.args.items()}
+        return True
+
+
+def _redact_telegram_url(value: Any) -> Any:
+    if isinstance(value, str):
+        return _TELEGRAM_BOT_URL_PATTERN.sub(r"\1<redacted>", value)
+    if isinstance(value, httpx.URL):
+        return _TELEGRAM_BOT_URL_PATTERN.sub(r"\1<redacted>", str(value))
+    return value
+
+
+def _ensure_httpx_log_redaction() -> None:
+    logger = logging.getLogger("httpx")
+    if not any(isinstance(item, _TelegramHttpxLogFilter) for item in logger.filters):
+        logger.addFilter(_TelegramHttpxLogFilter())
 
 
 class TelegramDeliveryError(RuntimeError):
@@ -44,8 +72,7 @@ class TelegramNotifier:
 
         # HTTPX includes the full request URL in INFO logs; this URL contains
         # the Telegram bot token, so request logging must not expose it.
-        httpx_logger = logging.getLogger("httpx")
-        httpx_logger.setLevel(max(httpx_logger.level, logging.WARNING))
+        _ensure_httpx_log_redaction()
         url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
         payload = {
             "chat_id": self._chat_id,
