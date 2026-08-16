@@ -95,6 +95,8 @@ async def run_digest(*, config_path: str, database_path: str, dry_run: bool) -> 
         store=store,
         notifier=_notifier(dry_run),
         source_priority=config.preferences.source_priority,
+        max_snapshot_release_age_days=config.notification.max_snapshot_release_age_days,
+        prune_stale=not dry_run,
     )
     await service.send_digest()
     return 0
