@@ -72,8 +72,16 @@ class SourceSnapshotRecord(Base):
 class SourceBaselineRecord(Base):
     __tablename__ = "source_baselines"
 
-    source: Mapped[str] = mapped_column(String(50), primary_key=True)
+    source: Mapped[str] = mapped_column(String(100), primary_key=True)
     initialized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SourceSeenItemRecord(Base):
+    __tablename__ = "source_seen_items"
+
+    source: Mapped[str] = mapped_column(String(50), primary_key=True)
+    source_event_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class EventStore:
@@ -185,6 +193,38 @@ class EventStore:
                     SourceBaselineRecord(
                         source=source,
                         initialized_at=timestamp.astimezone(UTC),
+                    )
+                )
+                session.commit()
+
+    def is_source_item_seen(self, source: str, source_event_id: str) -> bool:
+        with Session(self.engine) as session:
+            return (
+                session.get(
+                    SourceSeenItemRecord,
+                    {"source": source, "source_event_id": source_event_id},
+                )
+                is not None
+            )
+
+    def mark_source_item_seen(
+        self,
+        source: str,
+        source_event_id: str,
+        *,
+        seen_at: datetime | None = None,
+    ) -> None:
+        timestamp = seen_at or utc_now()
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise ValueError("seen_at must be timezone-aware")
+        with Session(self.engine) as session:
+            key = {"source": source, "source_event_id": source_event_id}
+            if session.get(SourceSeenItemRecord, key) is None:
+                session.add(
+                    SourceSeenItemRecord(
+                        source=source,
+                        source_event_id=source_event_id,
+                        seen_at=timestamp.astimezone(UTC),
                     )
                 )
                 session.commit()
