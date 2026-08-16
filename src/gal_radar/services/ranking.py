@@ -16,10 +16,10 @@ def score_event(event: NormalizedEvent, config: AppConfig) -> ScoreResult:
     score = 0
     reasons: list[str] = []
     followed_vns = {_normalized(item) for item in config.follow.visual_novels}
-    if event.vn_id and _normalized(event.vn_id) in followed_vns:
-        score += config.scoring.followed_vn
-        reasons.append("followed visual novel")
-    elif _normalized(event.title) in followed_vns:
+    if (
+        (event.vn_id and _normalized(event.vn_id) in followed_vns)
+        or _normalized(event.title) in followed_vns
+    ):
         score += config.scoring.followed_vn
         reasons.append("followed visual novel")
 
