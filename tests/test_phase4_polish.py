@@ -128,7 +128,7 @@ def test_doctor_reports_warnings_without_external_calls(
     capsys,
 ) -> None:
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("{}\n", encoding="utf-8")
+    config_path.write_text("discovery:\n  enabled: false\n", encoding="utf-8")
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
 
@@ -139,7 +139,7 @@ def test_doctor_reports_warnings_without_external_calls(
 
     output = capsys.readouterr().out
     assert code == 0
-    assert "WARN no follow targets are configured" in output
+    assert "WARN no follow targets are configured and auto-discovery is disabled" in output
     assert "WARN TELEGRAM_BOT_TOKEN is missing" in output
     assert "WARN TELEGRAM_CHAT_ID is missing" in output
 
@@ -158,3 +158,4 @@ def test_default_phase4_preferences_are_backward_compatible() -> None:
     assert config.notification.enabled_event_types == list(EventType)
     assert config.notification.max_snapshot_release_age_days == 30
     assert config.preferences.source_priority == ["vndb", "steam", "itch.io", "rss"]
+    assert config.discovery.enabled is True
