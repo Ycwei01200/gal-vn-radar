@@ -4,6 +4,7 @@ import logging
 import re
 import sys
 from datetime import date
+from pathlib import PurePosixPath
 from typing import Any, Literal, Protocol, TextIO
 from urllib.parse import urlparse
 
@@ -14,6 +15,8 @@ from gal_radar.models.event import EventType
 
 
 class _HttpClient(Protocol):
+    async def get(self, url: str, **kwargs: Any) -> httpx.Response: ...
+
     async def post(self, url: str, **kwargs: Any) -> httpx.Response: ...
 
 
@@ -77,7 +80,7 @@ class TelegramNotifier:
         if self._client is not None:
             await self._send_with_fallback(self._client, message, image_url)
         else:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
                 await self._send_with_fallback(client, message, image_url)
         return True
 
@@ -114,13 +117,28 @@ class TelegramNotifier:
         message: str,
         image_url: str,
     ) -> None:
+        try:
+            image_response = await client.get(image_url, timeout=15.0, follow_redirects=True)
+            image_response.raise_for_status()
+        except httpx.HTTPError:
+            raise TelegramDeliveryError("Image download failed") from None
+
+        parsed = urlparse(image_url)
+        filename = PurePosixPath(parsed.path).name or "cover.jpg"
+        content_type = image_response.headers.get("content-type", "application/octet-stream")
+
         document_url = f"https://api.telegram.org/bot{self._bot_token}/sendDocument"
-        payload = {
-            "chat_id": self._chat_id,
-            "document": image_url,
-            "caption": message,
-        }
-        await self._send_with_client(client, document_url, payload)
+        try:
+            response = await client.post(
+                document_url,
+                data={"chat_id": self._chat_id, "caption": message},
+                files={"document": (filename, image_response.content, content_type)},
+                timeout=15.0,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise TelegramDeliveryError("Telegram document delivery failed") from None
+        self._validate_telegram_response(response)
 
     async def _send_photo(
         self,
@@ -136,8 +154,9 @@ class TelegramNotifier:
         }
         await self._send_with_client(client, photo_url, payload)
 
-    @staticmethod
+    @classmethod
     async def _send_with_client(
+        cls,
         client: _HttpClient,
         url: str,
         payload: dict[str, Any],
@@ -147,7 +166,10 @@ class TelegramNotifier:
             response.raise_for_status()
         except httpx.HTTPError:
             raise TelegramDeliveryError("Telegram delivery request failed") from None
+        cls._validate_telegram_response(response)
 
+    @staticmethod
+    def _validate_telegram_response(response: httpx.Response) -> None:
         try:
             body = response.json()
         except ValueError:
