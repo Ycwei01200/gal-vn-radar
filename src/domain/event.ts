@@ -22,7 +22,7 @@ export function eventKeys(event: Event): readonly string[] {
     `${event.vnId}|${event.kind}|source|${event.source}|${event.sourceEventId}`,
   ];
 
-  return normalizedUrl === ""
+  return normalizedUrl === null || normalizedUrl === ""
     ? keys
     : [
         `${event.vnId}|${event.kind}|url|${normalizedUrl}`,
@@ -30,7 +30,7 @@ export function eventKeys(event: Event): readonly string[] {
       ];
 }
 
-function normalizeUrl(url: string): string {
+function normalizeUrl(url: string): string | null {
   const trimmed = url.trim();
 
   if (trimmed === "") {
@@ -43,7 +43,7 @@ function normalizeUrl(url: string): string {
     parsed.hostname = parsed.hostname.toLowerCase();
     return parsed.toString().replace(/\/$/, "");
   } catch {
-    return trimmed.replace(/\/$/, "");
+    return null;
   }
 }
 

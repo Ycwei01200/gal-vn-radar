@@ -21,6 +21,18 @@ describe("eventKeys", () => {
     );
   });
 
+  it("canonicalizes URL host casing and trailing slashes", () => {
+    expect(eventKeys(event("HTTPS://SteamCommunity.COM/news/42/"))[0]).toBe(
+      "vn-clannad|news|url|https://steamcommunity.com/news/42",
+    );
+  });
+
+  it("does not use an unparseable URL as a cross-source key", () => {
+    expect(eventKeys(event("steamcommunity.com/news/42"))[0]).toBe(
+      "vn-clannad|news|title|major update|day|2026-08-15",
+    );
+  });
+
   it("falls back to normalized title and UTC publication day", () => {
     expect(eventKeys(event(""))[0]).toBe(
       "vn-clannad|news|title|major update|day|2026-08-15",
