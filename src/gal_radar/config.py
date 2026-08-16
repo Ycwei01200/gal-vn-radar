@@ -96,6 +96,18 @@ class FollowConfig(BaseModel):
             return
         self.steam_apps.append(app)
 
+    def add_discovered_itch_app(self, app: ItchAppConfig) -> None:
+        target = str(app.url).rstrip("/").casefold()
+        if any(str(existing.url).rstrip("/").casefold() == target for existing in self.itch_apps):
+            return
+        self.itch_apps.append(app)
+
+    def add_discovered_feed(self, feed: FeedConfig) -> None:
+        target = str(feed.url).casefold()
+        if any(str(existing.url).casefold() == target for existing in self.feeds):
+            return
+        self.feeds.append(feed)
+
 
 class PreferencesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -112,6 +124,8 @@ class DiscoveryConfig(BaseModel):
     enabled: bool = True
     vndb_results: int = Field(default=50, ge=1, le=100)
     steam_from_vndb_extlinks: bool = True
+    itch_from_vndb_extlinks: bool = True
+    feeds_from_vndb_extlinks: bool = True
 
 
 class NotificationConfig(BaseModel):
