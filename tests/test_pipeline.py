@@ -116,11 +116,16 @@ def test_release_date_change_is_notified_once_and_unchanged_state_is_silent(even
 
         assert len(changed) == 1
         assert changed[0].event_type == EventType.DELAY.value
+        assert changed[0].source_event_id == "v20431:DELAY:2026-09-25->2026-11-27"
+        assert changed[0].notification_status == NotificationStatus.SENT.value
         assert changed[0].metadata_json["previous_release_date"] == "2026-09-25"
         assert changed[0].metadata_json["new_release_date"] == "2026-11-27"
         assert unchanged == []
         assert len(event_store.list_events()) == 1
         assert len(notifier.messages) == 1
+        snapshot = event_store.get_snapshot("vndb", "v20431")
+        assert snapshot is not None
+        assert snapshot.release_date.isoformat() == "2026-11-27"
 
     asyncio.run(run())
 
@@ -147,6 +152,7 @@ def test_tba_to_date_emits_release_date_and_advances_snapshot(event_store) -> No
 
         assert changed[0].event_type == EventType.RELEASE_DATE.value
         assert changed[0].source_event_id == "v20431:RELEASE_DATE:2026-09-25"
+        assert changed[0].notification_status == NotificationStatus.SENT.value
         assert unchanged == []
         assert len(event_store.list_events()) == 1
         snapshot = event_store.get_snapshot("vndb", "v20431")
@@ -178,8 +184,14 @@ def test_unreleased_to_released_is_notified_once(event_store) -> None:
 
         assert len(first_release) == 1
         assert first_release[0].event_type == EventType.RELEASED.value
+        assert first_release[0].source_event_id == "v20431:RELEASED:2026-09-25"
+        assert first_release[0].notification_status == NotificationStatus.SENT.value
         assert second_release == []
         assert len(notifier.messages) == 1
+        assert len(event_store.list_events()) == 1
+        snapshot = event_store.get_snapshot("vndb", "v20431")
+        assert snapshot is not None
+        assert snapshot.release_date.isoformat() == "2026-09-25"
 
     asyncio.run(run())
 
@@ -199,9 +211,14 @@ def test_new_title_after_baseline_creates_event_without_historical_backfill(even
 
         assert len(new_title) == 1
         assert new_title[0].event_type == EventType.NEW_TITLE.value
+        assert new_title[0].source_event_id == "v30000:NEW_TITLE"
         assert new_title[0].notification_status == NotificationStatus.SENT.value
         assert len(notifier.messages) == 1
-        assert event_store.get_snapshot("vndb", "v30000") is not None
+        assert len(event_store.list_events()) == 1
+        snapshot = event_store.get_snapshot("vndb", "v30000")
+        assert snapshot is not None
+        assert snapshot.title == "新しいタイトル"
+        assert snapshot.release_date is None
 
     asyncio.run(run())
 
@@ -220,8 +237,10 @@ def test_skipped_transition_advances_snapshot_without_notification(event_store) 
         skipped = await pipeline.run()
 
         assert skipped[0].event_type == EventType.RELEASE_DATE.value
+        assert skipped[0].source_event_id == "v20431:RELEASE_DATE:2026-09-25"
         assert skipped[0].notification_status == NotificationStatus.SKIPPED.value
         assert notifier.messages == []
+        assert len(event_store.list_events()) == 1
         snapshot = event_store.get_snapshot("vndb", "v20431")
         assert snapshot is not None
         assert snapshot.release_date.isoformat() == "2026-09-25"
@@ -243,9 +262,14 @@ def test_digest_transition_advances_snapshot_without_notification(event_store) -
         digest = await pipeline.run()
 
         assert digest[0].event_type == EventType.NEW_TITLE.value
+        assert digest[0].source_event_id == "v30000:NEW_TITLE"
         assert digest[0].notification_status == NotificationStatus.DIGEST.value
         assert notifier.messages == []
-        assert event_store.get_snapshot("vndb", "v30000") is not None
+        assert len(event_store.list_events()) == 1
+        snapshot = event_store.get_snapshot("vndb", "v30000")
+        assert snapshot is not None
+        assert snapshot.title == "新しいタイトル"
+        assert snapshot.release_date is None
 
     asyncio.run(run())
 
@@ -269,6 +293,9 @@ def test_already_sent_duplicate_still_advances_stale_snapshot(event_store) -> No
 
         assert processed == []
         assert notifier.messages == []
+        assert len(event_store.list_events()) == 1
+        assert event_store.list_events()[0].source_event_id == "v20431:RELEASE_DATE:2026-09-25"
+        assert event_store.list_events()[0].notification_status == NotificationStatus.SENT.value
         snapshot = event_store.get_snapshot("vndb", "v20431")
         assert snapshot is not None
         assert snapshot.release_date.isoformat() == "2026-09-25"
@@ -294,9 +321,13 @@ def test_delivery_failure_keeps_previous_snapshot_and_retries_same_transition(ev
 
         await pipeline.run()
         failed = await pipeline.run()
+        failed_snapshot = event_store.get_snapshot("vndb", "v20431")
         retried = await pipeline.run()
 
         assert failed[0].notification_status == NotificationStatus.FAILED.value
+        assert failed[0].source_event_id == "v20431:DELAY:2026-09-25->2026-11-27"
+        assert failed_snapshot is not None
+        assert failed_snapshot.release_date.isoformat() == "2026-09-25"
         assert retried[0].notification_status == NotificationStatus.SENT.value
         assert len(event_store.list_events()) == 1
         snapshot = event_store.get_snapshot("vndb", "v20431")
@@ -327,6 +358,7 @@ def test_dry_run_does_not_advance_snapshot_or_mark_event_delivered(event_store) 
         retried = await pipeline.run()
 
         assert pending[0].notification_status == NotificationStatus.PENDING.value
+        assert pending[0].source_event_id == "v20431:DELAY:2026-09-25->2026-11-27"
         assert retried[0].notification_status == NotificationStatus.PENDING.value
         assert len(event_store.list_events()) == 1
         assert len(notifier.messages) == 2
