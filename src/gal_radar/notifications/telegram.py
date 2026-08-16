@@ -4,23 +4,31 @@ import logging
 import re
 import sys
 from datetime import date
-from pathlib import PurePosixPath
 from typing import Any, Literal, Protocol, TextIO
-from urllib.parse import urlparse
 
 import httpx
 
 from gal_radar.database import EventRecord
 from gal_radar.models.event import EventType
+from gal_radar.services.http_safety import (
+    ResponseTooLargeError,
+    UnsafeUrlError,
+    fetch_limited_bytes,
+    filename_from_url,
+    validate_public_http_url,
+)
 
 
 class _HttpClient(Protocol):
+    def stream(self, method: str, url: str, **kwargs: Any) -> Any: ...
+
     async def get(self, url: str, **kwargs: Any) -> httpx.Response: ...
 
     async def post(self, url: str, **kwargs: Any) -> httpx.Response: ...
 
 
 _TELEGRAM_BOT_URL_PATTERN = re.compile(r"(https://api\.telegram\.org/bot)[^/\s\"']+")
+COVER_MAX_BYTES = 20 * 1024 * 1024
 
 
 class _TelegramHttpxLogFilter(logging.Filter):
@@ -61,6 +69,7 @@ class TelegramNotifier:
         client: _HttpClient | None = None,
         stdout: TextIO | None = None,
         image_delivery: Literal["photo", "document"] = "photo",
+        cover_max_bytes: int = COVER_MAX_BYTES,
     ) -> None:
         self._bot_token = (bot_token or "").strip()
         self._chat_id = (chat_id or "").strip()
@@ -68,6 +77,7 @@ class TelegramNotifier:
         self._client = client
         self._stdout = stdout if stdout is not None else sys.stdout
         self._image_delivery = image_delivery
+        self._cover_max_bytes = cover_max_bytes
         if not dry_run and (not self._bot_token or not self._chat_id):
             raise ValueError("Telegram bot token and chat ID are required when dry-run is disabled")
 
@@ -80,7 +90,7 @@ class TelegramNotifier:
         if self._client is not None:
             await self._send_with_fallback(self._client, message, image_url)
         else:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
                 await self._send_with_fallback(client, message, image_url)
         return True
 
@@ -118,21 +128,28 @@ class TelegramNotifier:
         image_url: str,
     ) -> None:
         try:
-            image_response = await client.get(image_url, timeout=15.0, follow_redirects=True)
-            image_response.raise_for_status()
-        except httpx.HTTPError:
-            raise TelegramDeliveryError("Image download failed") from None
+            image_bytes, final_url, content_type = await fetch_limited_bytes(
+                client,
+                image_url,
+                timeout=15.0,
+                max_bytes=self._cover_max_bytes,
+            )
+        except (httpx.HTTPError, UnsafeUrlError, ResponseTooLargeError):
+            raise TelegramDeliveryError("Image download rejected") from None
 
-        parsed = urlparse(image_url)
-        filename = PurePosixPath(parsed.path).name or "cover.jpg"
-        content_type = image_response.headers.get("content-type", "application/octet-stream")
-
+        filename = filename_from_url(final_url, "cover.jpg")
         document_url = f"https://api.telegram.org/bot{self._bot_token}/sendDocument"
         try:
             response = await client.post(
                 document_url,
                 data={"chat_id": self._chat_id, "caption": message},
-                files={"document": (filename, image_response.content, content_type)},
+                files={
+                    "document": (
+                        filename,
+                        image_bytes,
+                        content_type or "application/octet-stream",
+                    )
+                },
                 timeout=15.0,
             )
             response.raise_for_status()
@@ -182,10 +199,10 @@ def _is_valid_image_url(value: str | None) -> bool:
     if not value:
         return False
     try:
-        parsed = urlparse(value)
-    except ValueError:
+        validate_public_http_url(value)
+    except UnsafeUrlError:
         return False
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    return True
 
 
 def render_zh_tw_notification(
