@@ -1,37 +1,56 @@
 # Gal/VN Radar
 
-Gal/VN Radar is a personal Visual Novel / Galgame information monitor. It polls structured sources, converts source data into canonical events, removes duplicates, calculates an explainable relevance score, and sends high-relevance notifications to Telegram.
+Gal/VN Radar is a personal Visual Novel / Galgame information monitor. It polls structured sources, converts source data into canonical events, deduplicates them across sources, calculates an explainable relevance score, and sends high-relevance notifications or digests to Telegram.
 
-The current implementation uses VNDB for VN/release-state tracking and Steam News for configured Steam applications. SQLite provides persistence, deterministic scoring, source baselines, seen-item tracking, and cross-source deduplication. Use cron or another external scheduler for periodic execution.
+## v1 status
+
+Gal/VN Radar v1 is deployable on Windows with CLI commands scheduled by Windows Task Scheduler.
+
+Implemented sources:
+
+- **VNDB**: snapshot-based VN and release-state tracking.
+- **Steam News**: configured Steam app news feeds.
+- **itch.io**: configured project devlog RSS feeds.
+- **RSS/Atom**: explicitly configured public feeds.
+
+Deferred sources:
+
+- DLsite
+- Ci-en
+- Fantia
+
+These are deferred because the project intentionally avoids authenticated scraping, browser automation, CAPTCHA/Cloudflare bypasses, and brittle arbitrary HTML parsing.
 
 ## Architecture
 
 ```text
-VNDB state ---------------------> SourceAdapter --\
-                                                \
-Steam News feed ----------------> SourceAdapter ----> SourceEvent / Normalizer
-                                                    -> Baseline / Seen-item tracking
-                                                    -> SQLite Event Store
-                                                    -> Cross-source Deduplication
-                                                    -> Relevance Scoring
-                                                    -> zh-TW Renderer
-                                                    -> Telegram
+VNDB snapshot ------------------\
+Steam News feed -----------------\
+itch.io devlog RSS ---------------> SourceAdapter -> SourceEvent
+Configured RSS/Atom ------------/                    -> normalize
+                                                     -> baseline / seen items
+                                                     -> SQLite Event Store
+                                                     -> cross-source dedup
+                                                     -> provenance
+                                                     -> relevance scoring
+                                                     -> zh-TW renderer
+                                                     -> Telegram / Digest
 ```
 
-VNDB's official Kana API is query-oriented rather than a news feed. The adapter therefore converts current VN/release state into stable event identities. The first successful VNDB fetch establishes a silent baseline; it does not backfill historical notifications. Later observations can produce `RELEASE_DATE`, `DELAY`, `RELEASED`, or `NEW_TITLE` events. Failed or dry-run deliveries do not advance the source snapshot, so the same transition can be retried safely. Configured developer names are resolved to stable VNDB producer IDs for matching while the configured names remain human-readable.
+VNDB uses snapshot/change-detection semantics. Its first successful fetch establishes a silent baseline. Later observations can produce `RELEASE_DATE`, `DELAY`, `RELEASED`, or `NEW_TITLE` events.
 
-Steam News is an append-style feed. Each configured Steam app gets its own silent first-sync baseline. Existing announcements are marked seen without notification, and later unseen announcements are classified into canonical event types such as `PATCH`, `DEMO`, `RELEASED`, `DELAY`, `RELEASE_DATE`, `TRAILER`, `DEVLOG`, or `OTHER` before scoring and delivery.
+Steam, itch.io, and generic RSS/Atom are append-style feeds. Their first successful fetch marks existing entries seen without historical notification spam. Later unseen entries are processed exactly once.
 
 ## Setup
 
 Requirements: Python 3.12+ and `uv`.
 
-```bash
+```powershell
 uv sync
-cp config.example.yaml config.yaml
+Copy-Item config.example.yaml config.yaml
 ```
 
-Edit `config.yaml` to choose developers, VNs, preferred tags, and optional Steam app mappings.
+Keep `config.yaml` local and untracked.
 
 ## Configuration
 
@@ -66,105 +85,150 @@ notification:
   digest_threshold: 40
 ```
 
-`visual_novels` accepts a VNDB ID such as `v20431` or a title search string. Developer names are resolved through VNDB's producer API. Preferred tags affect relevance scoring.
+`visual_novels` accepts a VNDB ID or title search string. Developer names are resolved through VNDB producer IDs for stable matching. Explicit mappings are preferred for Steam, itch.io, and feeds; no fuzzy title-to-VN matching is performed.
 
-## 支援情報來源
+## Telegram configuration
 
-- **VNDB**: 提供新作、發售日異動、發售等情報 (Snapshot 模式)。
-- **Steam**: 支援追蹤特定 Steam App 頁面的新聞公告 (Feed 模式)。
-- **itch.io**: 支援追蹤特定遊戲的 itch.io Devlog (Feed 模式)。
-- **官方 RSS**: 支援自訂 RSS/Atom 來源 (Feed 模式)。
+Set credentials as environment variables. Never commit them.
 
-> **注意：** 關於 DLsite、Ci-en 及 Fantia，目前因為這些平台缺乏官方公開 API 及 RSS 訂閱，且通常需要帳號登入或涉及反爬蟲機制 (Cloudflare 等)，因此暫不支援 (Deferred)。若未來有官方結構化介面，將再行評估。by Gal/VN Radar. This avoids guessing which Steam product belongs to which VN and allows Steam events to participate in the same scoring and cross-source deduplication rules. `developer` is optional; when present, use the same human-readable name used in `follow.developers`.
+```powershell
+[Environment]::SetEnvironmentVariable(
+    "TELEGRAM_BOT_TOKEN",
+    "<token>",
+    "User"
+)
+[Environment]::SetEnvironmentVariable(
+    "TELEGRAM_CHAT_ID",
+    "<chat-id>",
+    "User"
+)
+```
 
-Invalid configuration fails at startup with a validation error.
+Open a new PowerShell after setting them. The deployment runners also re-read these values from the persistent User environment when needed.
 
-## Cross-source deduplication
+## Commands
 
-Normalized event identity is source-independent. Gal/VN Radar uses the VN identity plus canonical event semantics rather than the source name. This allows, for example, a VNDB `RELEASED` transition and a Steam "now available" announcement for the same VN to collapse into one logical event.
+Fetch:
 
-Rules remain deterministic:
+```powershell
+uv run python -m gal_radar.main fetch --config config.yaml --database data/gal_radar.db
+```
 
-- singleton events such as `NEW_TITLE` and `RELEASED` deduplicate by VN + event type;
-- release-date changes use VN + event type + normalized release date;
-- repeatable feed events such as patches include the normalized news headline, so `Patch 1.1` and `Patch 1.2` remain separate events;
-- source + source event ID is still retained for exact same-source replay protection.
+Safe preview:
+
+```powershell
+uv run python -m gal_radar.main fetch --dry-run --config config.yaml --database data/gal_radar.db
+```
+
+Digest:
+
+```powershell
+uv run python -m gal_radar.main digest --config config.yaml --database data/gal_radar.db
+```
+
+Status:
+
+```powershell
+uv run python -m gal_radar.main status --config config.yaml --database data/gal_radar.db
+```
+
+Backup:
+
+```powershell
+uv run python -m gal_radar.main backup --database data/gal_radar.db --output backups
+```
+
+## Cross-source deduplication and provenance
+
+Normalized event identity is source-independent. The system uses VN identity plus canonical event semantics rather than source name. For example, a VNDB `RELEASED` transition and a Steam or RSS release announcement for the same VN can collapse into one logical event.
+
+When multiple sources corroborate the same logical event, the canonical event is retained and additional source references are recorded. Telegram can render source labels such as:
+
+```text
+來源：VNDB、Steam、官方 RSS
+```
 
 No LLM or fuzzy semantic matching is used.
 
-## Telegram bot configuration
+## Telegram behavior
 
-Set credentials through environment variables. Do not commit them.
+High-relevance events are delivered immediately. Medium-relevance events enter the digest queue. Digest messages are ordered deterministically and split into batches of at most 10 events. A batch is marked `SENT` only after confirmed Telegram delivery; later batches remain retryable if a partial digest delivery fails.
 
-```bash
-export TELEGRAM_BOT_TOKEN="..."
-export TELEGRAM_CHAT_ID="..."
+When a source provides a stable HTTP(S) image URL, Telegram uses `sendPhoto`; failures fall back to text. Bot tokens are redacted from logs.
+
+## Operational reliability
+
+- Source failures are isolated so healthy adapters can continue.
+- Failed feeds do not initialize baselines or consume unseen items.
+- SQLite preserves baselines, seen-item state, dedup state, and notifications across process restarts.
+- Runtime logs rotate at 5 MiB with five backups.
+- SQLite backups use the SQLite backup API rather than a blind file copy.
+- `status` performs local health inspection without external API calls or Telegram sends.
+
+## Windows deployment
+
+The v1 deployment model is CLI + Windows Task Scheduler. No internal daemon or scheduler is used.
+
+One-command task installation:
+
+```powershell
+.\scripts\install-scheduled-tasks.ps1
 ```
 
-See `.env.example` for the variable names. The application does not automatically load `.env`; use your shell, service manager, or secret manager to set environment variables.
+Default schedule:
 
-When a source provides a valid HTTP(S) image URL, Telegram receives the notification through `sendPhoto` with the zh-TW notification as its caption. Missing or invalid images use `sendMessage`, and a failed photo request falls back to text. The text message remains the source of truth for dry-run output.
+- `GalVNRadar-Fetch`: every 30 minutes.
+- `GalVNRadar-Digest`: daily at 20:00 local time.
+- failure retry: after 5 minutes, up to 3 attempts.
+- overlapping runs: ignored.
+- execution time limit: 15 minutes.
 
-## Run a fetch
+Inspect tasks:
 
-```bash
-uv run python -m gal_radar.main fetch --config config.yaml
+```powershell
+.\scripts\check-scheduled-tasks.ps1
 ```
 
-The default database path is `data/gal_radar.db`.
+See [`docs/windows-deployment.md`](docs/windows-deployment.md) for deployment and restore instructions.
 
-If `follow.steam_apps` is empty, Steam News is not queried.
+## Short soak validation
 
-## Dry run
-
-```bash
-uv run python -m gal_radar.main fetch --dry-run --config config.yaml
+```powershell
+.\scripts\soak-test.ps1 -Iterations 10 -IntervalSeconds 60 -DryRun
 ```
 
-Dry-run mode prints the final Traditional Chinese Telegram message to stdout, makes no Telegram request, and does not mark an event as delivered. Feed items that would require a notification are not marked seen until a terminal result is reached, so dry-run does not consume future Steam notifications.
+The project has been exercised through repeated live VNDB polling without fatal failure. A multi-day production soak is still an operational confidence exercise rather than a v1 feature requirement.
 
-## Tests and linting
+See [`docs/phase3-soak-checklist.md`](docs/phase3-soak-checklist.md).
 
-```bash
+## Final verification
+
+Run:
+
+```powershell
+.\scripts\verify-v1.ps1
+```
+
+It checks automated tests, Ruff, `git diff --check`, local status, runner dry-runs, scheduled-task presence, and recent log availability without intentionally sending Telegram notifications.
+
+## Tests
+
+```powershell
 uv run pytest
 uv run ruff check .
+git diff --check
 ```
 
-Tests use mocked HTTP transports and never require live VNDB, Steam, or Telegram services.
-
-## Cron example
-
-Run every 30 minutes:
-
-```cron
-*/30 * * * * cd /path/to/gal-vn-radar && /path/to/uv run python -m gal_radar.main fetch --config config.yaml >> data/cron.log 2>&1
-```
-
-Use absolute paths in cron and provide the Telegram environment variables through the cron environment or a wrapper script.
+Automated tests use mocks/fixtures for external network behavior. Live source and Telegram checks are manual operational validation and must not be inferred from unit tests.
 
 ## Adding a new source
 
 1. Add an adapter under `src/gal_radar/adapters/`.
-2. Implement the `SourceAdapter` protocol from `adapters/base.py`.
-3. Convert all source-specific responses into `SourceEvent` instances inside the adapter.
-4. For state-style sources, use the existing snapshot/change-detection path. For append-style feeds, set `mode = "feed"`, provide a stable `metadata.feed_key`, and let the pipeline baseline existing items before processing new ones.
-5. Keep normalization, deduplication, scoring, storage, and Telegram code source-agnostic.
-6. Add fixture- or mock-based tests for success, malformed responses, timeouts, and rate limits as applicable.
-7. Register the adapter in `main.py` only after it is tested.
+2. Implement the existing `SourceAdapter` protocol.
+3. Convert source data to `SourceEvent`.
+4. Use snapshot mode for state sources or `mode = "feed"` for append-style sources.
+5. Reuse baseline, seen-item, normalization, dedup, provenance, scoring, and notification services.
+6. Add fixture/mock-based tests.
+7. Register the adapter only after tests pass.
 
-DLsite, Ci-en, Fantia, developer websites, digest scheduling, and LLM-based semantic deduplication remain deferred.
-
-## Manual RSS E2E Validation
-
-To manually validate a live RSS feed without spamming yourself with historical items:
-
-1. Configure a single RSS feed in your `config.yaml` using a real URL.
-2. Run `uv run python -m gal_radar.main fetch --config config.yaml` to establish the silent baseline. This fetches the feed and marks all existing items as seen, saving to `source_baselines` and `source_seen_items`.
-3. Run the same fetch command again. The system will skip the seen items and produce no new notifications.
-4. You can then use the `--dry-run` flag in the future to safely preview notifications if a new item is published to the feed.
-
-## Operational Hardening & Error Isolation
-
-- **Provenance & Corroboration**: If multiple sources report the same logical event (e.g., VNDB, Steam, and an official RSS feed), the system preserves the primary event while recording corroborating sources. Telegram notifications will display all sources (e.g., `來源：VNDB、Steam、官方 RSS`).
-- **Error Isolation**: The pipeline isolates failures at the smallest sensible unit. A failure in one Steam app or one RSS feed will log the error but allow other apps and feeds to process successfully. A failed source does not initialize its baseline, nor does it mark any unseen items as seen, ensuring safe retries on the next fetch.
-- **Digest Batching**: Digests are deterministically sorted (highest relevance score and most recent publish date first) and split into batches of 10 events per message to avoid exceeding Telegram message limits. Each batch is individually tracked and marked as `SENT` only upon successful delivery.
+Do not introduce authenticated scraping or browser-automation workarounds merely to increase source count.
