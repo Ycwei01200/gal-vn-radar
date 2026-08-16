@@ -159,7 +159,7 @@ class Pipeline:
                 corroboration = {
                     "source": source_event.source,
                     "source_event_id": source_event.source_event_id,
-                    "url": source_event.url,
+                    "url": str(source_event.url),
                     "published_at": (
                         source_event.published_at.isoformat() if source_event.published_at else None
                     ),
