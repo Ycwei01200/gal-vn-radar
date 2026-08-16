@@ -124,7 +124,12 @@ class Pipeline:
     async def _deliver(self, record: EventRecord) -> None:
         message = render_zh_tw_notification(record)
         try:
-            delivered = await self._notifier.send(message)
+            try:
+                delivered = await self._notifier.send(message, image_url=record.image_url)
+            except TypeError as exc:
+                if "image_url" not in str(exc):
+                    raise
+                delivered = await self._notifier.send(message)
         except Exception:
             self._store.update_notification_status(record.id, NotificationStatus.FAILED)
             record.notification_status = NotificationStatus.FAILED.value

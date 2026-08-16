@@ -29,9 +29,11 @@ class SequenceAdapter:
 class SuccessfulNotifier:
     def __init__(self) -> None:
         self.messages: list[str] = []
+        self.image_urls: list[str | None] = []
 
-    async def send(self, message: str) -> bool:
+    async def send(self, message: str, *, image_url: str | None = None) -> bool:
         self.messages.append(message)
+        self.image_urls.append(image_url)
         return True
 
 
@@ -40,17 +42,27 @@ class FailingOnceNotifier(SuccessfulNotifier):
         super().__init__()
         self.failed = True
 
-    async def send(self, message: str) -> bool:
+    async def send(self, message: str, *, image_url: str | None = None) -> bool:
         if self.failed:
             self.failed = False
             raise RuntimeError("Telegram unavailable")
-        return await super().send(message)
+        return await super().send(message, image_url=image_url)
 
 
 class DryRunNotifier(SuccessfulNotifier):
+    async def send(self, message: str, *, image_url: str | None = None) -> bool:
+        self.messages.append(message)
+        self.image_urls.append(image_url)
+        return False
+
+
+class LegacyTextNotifier:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
     async def send(self, message: str) -> bool:
         self.messages.append(message)
-        return False
+        return True
 
 
 def load_fixture(name: str) -> SourceEvent:
@@ -229,6 +241,45 @@ def test_new_title_after_baseline_creates_event_without_historical_backfill(even
         assert snapshot is not None
         assert snapshot.title == "新しいタイトル"
         assert snapshot.release_date is None
+
+    asyncio.run(run())
+
+
+def test_pipeline_passes_image_url_and_persists_it(event_store) -> None:
+    async def run() -> None:
+        notifier = SuccessfulNotifier()
+        pipeline = Pipeline(
+            config=low_threshold_config(),
+            store=event_store,
+            adapters=[SequenceAdapter([load_fixture("tba")], [load_fixture("future")])],
+            notifier=notifier,
+        )
+
+        await pipeline.run()
+        processed = await pipeline.run()
+
+        assert processed[0].image_url == "https://t.vndb.org/cv/12/3456.jpg"
+        assert notifier.image_urls == ["https://t.vndb.org/cv/12/3456.jpg"]
+        assert event_store.list_events()[0].image_url == "https://t.vndb.org/cv/12/3456.jpg"
+
+    asyncio.run(run())
+
+
+def test_pipeline_keeps_legacy_text_notifier_compatible(event_store) -> None:
+    async def run() -> None:
+        notifier = LegacyTextNotifier()
+        pipeline = Pipeline(
+            config=low_threshold_config(),
+            store=event_store,
+            adapters=[SequenceAdapter([load_fixture("tba")], [load_fixture("future")])],
+            notifier=notifier,
+        )
+
+        await pipeline.run()
+        processed = await pipeline.run()
+
+        assert processed[0].notification_status == NotificationStatus.SENT.value
+        assert len(notifier.messages) == 1
 
     asyncio.run(run())
 

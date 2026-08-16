@@ -5,6 +5,7 @@ import re
 import sys
 from datetime import date
 from typing import Any, Protocol, TextIO
+from urllib.parse import urlparse
 
 import httpx
 
@@ -65,7 +66,7 @@ class TelegramNotifier:
         if not dry_run and (not self._bot_token or not self._chat_id):
             raise ValueError("Telegram bot token and chat ID are required when dry-run is disabled")
 
-    async def send(self, message: str) -> bool:
+    async def send(self, message: str, *, image_url: str | None = None) -> bool:
         if self._dry_run:
             print(message, file=self._stdout)
             return False
@@ -73,18 +74,39 @@ class TelegramNotifier:
         # HTTPX includes the full request URL in INFO logs; this URL contains
         # the Telegram bot token, so request logging must not expose it.
         _ensure_httpx_log_redaction()
-        url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
-        payload = {
+        if self._client is not None:
+            await self._send_with_fallback(self._client, message, image_url)
+        else:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                await self._send_with_fallback(client, message, image_url)
+        return True
+
+    async def _send_with_fallback(
+        self,
+        client: _HttpClient,
+        message: str,
+        image_url: str | None,
+    ) -> None:
+        if _is_valid_image_url(image_url):
+            photo_url = f"https://api.telegram.org/bot{self._bot_token}/sendPhoto"
+            photo_payload = {
+                "chat_id": self._chat_id,
+                "photo": image_url,
+                "caption": message,
+            }
+            try:
+                await self._send_with_client(client, photo_url, photo_payload)
+                return
+            except TelegramDeliveryError:
+                pass
+
+        text_url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
+        text_payload = {
             "chat_id": self._chat_id,
             "text": message,
             "disable_web_page_preview": True,
         }
-        if self._client is not None:
-            await self._send_with_client(self._client, url, payload)
-        else:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                await self._send_with_client(client, url, payload)
-        return True
+        await self._send_with_client(client, text_url, text_payload)
 
     @staticmethod
     async def _send_with_client(
@@ -104,6 +126,16 @@ class TelegramNotifier:
             raise TelegramDeliveryError("Telegram returned invalid JSON") from None
         if not isinstance(body, dict) or body.get("ok") is not True:
             raise TelegramDeliveryError("Telegram did not confirm message delivery")
+
+
+def _is_valid_image_url(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def render_zh_tw_notification(event: EventRecord) -> str:
