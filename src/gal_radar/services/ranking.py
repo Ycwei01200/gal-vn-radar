@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from gal_radar.config import AppConfig
-from gal_radar.models.event import NormalizedEvent
+from gal_radar.models.event import EventType, NormalizedEvent
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,12 +16,20 @@ def score_event(event: NormalizedEvent, config: AppConfig) -> ScoreResult:
     score = 0
     reasons: list[str] = []
     followed_vns = {_normalized(item) for item in config.follow.visual_novels}
-    if (
+    is_followed_vn = (
         (event.vn_id and _normalized(event.vn_id) in followed_vns)
         or _normalized(event.title) in followed_vns
-    ):
+    )
+    if is_followed_vn:
         score += config.scoring.followed_vn
         reasons.append("followed visual novel")
+    elif (
+        event.vn_id
+        and _normalized(event.vn_id) in config.follow.discovered_vn_ids
+        and event.event_type is not EventType.OTHER
+    ):
+        score += config.scoring.discovered_vn
+        reasons.append("auto-discovered visual novel")
 
     matched_developer = _matched_followed_developer(event, config)
     if matched_developer is not None:
