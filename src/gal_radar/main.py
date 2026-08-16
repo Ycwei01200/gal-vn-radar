@@ -25,7 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     fetch = subparsers.add_parser("fetch", help="Fetch, score, store, and notify new events")
-    fetch.add_argument("--dry-run", action="store_true", help="Render notifications without Telegram")
+    fetch.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Render notifications without Telegram",
+    )
     fetch.add_argument("--config", default="config.yaml", help="Path to YAML configuration")
     fetch.add_argument("--database", default="data/gal_radar.db", help="Path to SQLite database")
 
