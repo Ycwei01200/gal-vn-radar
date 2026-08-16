@@ -104,7 +104,12 @@ async def fetch_limited_bytes(
 
                 response.raise_for_status()
                 declared_length = response.headers.get("content-length")
-                if declared_length and declared_length.isdigit() and int(declared_length) > max_bytes:
+                content_length_too_large = (
+                    declared_length is not None
+                    and declared_length.isdigit()
+                    and int(declared_length) > max_bytes
+                )
+                if content_length_too_large:
                     raise ResponseTooLargeError("response exceeds size limit")
 
                 chunks: list[bytes] = []
