@@ -77,7 +77,10 @@ class Pipeline:
                 if record is None:
                     normalized = normalize_event(changed_event)
                     duplicate = find_duplicate(self._store, normalized)
-                    if duplicate is not None and duplicate.notification_status in _TERMINAL_STATUSES:
+                    if (
+                        duplicate is not None
+                        and duplicate.notification_status in _TERMINAL_STATUSES
+                    ):
                         self._store.save_snapshot(source, snapshot_from_event(source_event))
                     continue
 
@@ -124,7 +127,10 @@ class Pipeline:
                     if record is None:
                         normalized = normalize_event(event)
                         duplicate = find_duplicate(self._store, normalized)
-                        if duplicate is not None and duplicate.notification_status in _TERMINAL_STATUSES:
+                        if (
+                            duplicate is not None
+                            and duplicate.notification_status in _TERMINAL_STATUSES
+                        ):
                             self._store.mark_source_item_seen(source, event.source_event_id)
                         continue
                     if record.notification_status in _TERMINAL_STATUSES:
