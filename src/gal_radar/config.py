@@ -26,6 +26,21 @@ class SteamAppConfig(BaseModel):
     developer: str | None = None
 
 
+class ItchAppConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: HttpUrl
+    vn_id: str | None = None
+    title: str | None = None
+    developer: str | None = None
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> ItchAppConfig:
+        if not self.vn_id and not self.developer:
+            raise ValueError("Itch app must specify either vn_id or developer")
+        return self
+
+
 class FeedConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -48,6 +63,7 @@ class FollowConfig(BaseModel):
     visual_novels: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     steam_apps: list[SteamAppConfig] = Field(default_factory=list)
+    itch_apps: list[ItchAppConfig] = Field(default_factory=list)
     feeds: list[FeedConfig] = Field(default_factory=list)
     _resolved_developer_ids: list[str] = PrivateAttr(default_factory=list)
 

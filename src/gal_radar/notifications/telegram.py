@@ -200,6 +200,8 @@ def _source_display(source: str) -> str:
         return "Steam"
     if source == "rss":
         return "官方 RSS"
+    if source == "itch.io":
+        return "itch.io"
     return source
 
 

@@ -38,16 +38,23 @@ Edit `config.yaml` to choose developers, VNs, preferred tags, and optional Steam
 ```yaml
 follow:
   developers:
-    - 枕
+    - visual arts
+    - yuzusoft
   visual_novels:
     - v20431
   tags:
-    - nakige
+    - science fiction
   steam_apps:
-    - app_id: 123456
-      vn_id: v20431
-      title: サクラノ刻－櫻の森の下を歩む－
-      developer: 枕
+    - app_id: 123450
+      vn_id: v123
+      title: "Example Game"
+  itch_apps:
+    - url: "https://example.itch.io/game"
+      vn_id: "v123"
+      title: "Example Game"
+  feeds:
+    - url: "https://example.com/rss.xml"
+      vn_id: "v123"
 
 preferences:
   languages:
@@ -61,7 +68,14 @@ notification:
 
 `visual_novels` accepts a VNDB ID such as `v20431` or a title search string. Developer names are resolved through VNDB's producer API. Preferred tags affect relevance scoring.
 
-`steam_apps` is optional. Each entry explicitly maps a Steam App ID to the canonical VN identity used by Gal/VN Radar. This avoids guessing which Steam product belongs to which VN and allows Steam events to participate in the same scoring and cross-source deduplication rules. `developer` is optional; when present, use the same human-readable name used in `follow.developers`.
+## 支援情報來源
+
+- **VNDB**: 提供新作、發售日異動、發售等情報 (Snapshot 模式)。
+- **Steam**: 支援追蹤特定 Steam App 頁面的新聞公告 (Feed 模式)。
+- **itch.io**: 支援追蹤特定遊戲的 itch.io Devlog (Feed 模式)。
+- **官方 RSS**: 支援自訂 RSS/Atom 來源 (Feed 模式)。
+
+> **注意：** 關於 DLsite、Ci-en 及 Fantia，目前因為這些平台缺乏官方公開 API 及 RSS 訂閱，且通常需要帳號登入或涉及反爬蟲機制 (Cloudflare 等)，因此暫不支援 (Deferred)。若未來有官方結構化介面，將再行評估。by Gal/VN Radar. This avoids guessing which Steam product belongs to which VN and allows Steam events to participate in the same scoring and cross-source deduplication rules. `developer` is optional; when present, use the same human-readable name used in `follow.developers`.
 
 Invalid configuration fails at startup with a validation error.
 
@@ -138,7 +152,7 @@ Use absolute paths in cron and provide the Telegram environment variables throug
 6. Add fixture- or mock-based tests for success, malformed responses, timeouts, and rate limits as applicable.
 7. Register the adapter in `main.py` only after it is tested.
 
-itch.io RSS, developer RSS feeds, DLsite, Ci-en, Fantia, developer websites, digest scheduling, and LLM-based semantic deduplication remain deferred.
+DLsite, Ci-en, Fantia, developer websites, digest scheduling, and LLM-based semantic deduplication remain deferred.
 
 ## Manual RSS E2E Validation
 

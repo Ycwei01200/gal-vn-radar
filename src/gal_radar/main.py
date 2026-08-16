@@ -5,6 +5,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from gal_radar.adapters.itch import ItchAdapter
 from gal_radar.adapters.rss import RSSAdapter
 from gal_radar.adapters.steam import SteamNewsAdapter
 from gal_radar.adapters.vndb import VNDBAdapter
@@ -54,6 +55,8 @@ async def run_fetch(*, config_path: str, database_path: str, dry_run: bool) -> N
     adapters = [VNDBAdapter()]
     if config.follow.steam_apps:
         adapters.append(SteamNewsAdapter())
+    if config.follow.itch_apps:
+        adapters.append(ItchAdapter())
     if config.follow.feeds:
         adapters.append(RSSAdapter())
 
