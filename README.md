@@ -16,6 +16,9 @@ IDs. They are not tied to a Steam user account or credentials:
 The adapter accepts an injected `fetch` implementation, which keeps tests
 fixture-based and avoids requiring Steam credentials:
 
+Build the TypeScript source first with `npm run build`; the package root then
+resolves to the generated `dist` entrypoint used by this example.
+
 ```ts
 import {
   EventIngestService,
