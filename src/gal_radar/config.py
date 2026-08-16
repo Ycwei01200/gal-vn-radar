@@ -97,6 +97,7 @@ class NotificationConfig(BaseModel):
     immediate_threshold: int = Field(default=70, ge=0)
     digest_threshold: int = Field(default=40, ge=0)
     enabled_event_types: list[EventType] = Field(default_factory=lambda: list(EventType))
+    max_snapshot_release_age_days: int = Field(default=30, ge=0)
 
     @model_validator(mode="after")
     def validate_thresholds(self) -> NotificationConfig:
