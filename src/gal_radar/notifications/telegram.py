@@ -56,13 +56,13 @@ class TelegramNotifier:
         chat_id: str | None = None,
         dry_run: bool = False,
         client: _HttpClient | None = None,
-        stdout: TextIO = sys.stdout,
+        stdout: TextIO | None = None,
     ) -> None:
         self._bot_token = (bot_token or "").strip()
         self._chat_id = (chat_id or "").strip()
         self._dry_run = dry_run
         self._client = client
-        self._stdout = stdout
+        self._stdout = stdout if stdout is not None else sys.stdout
         if not dry_run and (not self._bot_token or not self._chat_id):
             raise ValueError("Telegram bot token and chat ID are required when dry-run is disabled")
 
