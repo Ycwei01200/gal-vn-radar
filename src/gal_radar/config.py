@@ -66,10 +66,15 @@ class FollowConfig(BaseModel):
     itch_apps: list[ItchAppConfig] = Field(default_factory=list)
     feeds: list[FeedConfig] = Field(default_factory=list)
     _resolved_developer_ids: list[str] = PrivateAttr(default_factory=list)
+    _discovered_vn_ids: set[str] = PrivateAttr(default_factory=set)
 
     @property
     def resolved_developer_ids(self) -> list[str]:
         return list(self._resolved_developer_ids)
+
+    @property
+    def discovered_vn_ids(self) -> set[str]:
+        return set(self._discovered_vn_ids)
 
     def set_resolved_developer_ids(self, developer_ids: list[str]) -> None:
         resolved_ids: list[str] = []
@@ -81,6 +86,16 @@ class FollowConfig(BaseModel):
                 resolved_ids.append(stripped)
         self._resolved_developer_ids = resolved_ids
 
+    def add_discovered_vn(self, vn_id: str) -> None:
+        stripped = vn_id.strip().lower()
+        if stripped:
+            self._discovered_vn_ids.add(stripped)
+
+    def add_discovered_steam_app(self, app: SteamAppConfig) -> None:
+        if any(existing.app_id == app.app_id for existing in self.steam_apps):
+            return
+        self.steam_apps.append(app)
+
 
 class PreferencesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -89,6 +104,14 @@ class PreferencesConfig(BaseModel):
     source_priority: list[str] = Field(
         default_factory=lambda: ["vndb", "steam", "itch.io", "rss"]
     )
+
+
+class DiscoveryConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    vndb_results: int = Field(default=50, ge=1, le=100)
+    steam_from_vndb_extlinks: bool = True
 
 
 class NotificationConfig(BaseModel):
@@ -112,6 +135,7 @@ class ScoringConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     followed_vn: int = 100
+    discovered_vn: int = 40
     followed_developer: int = 60
     preferred_tag: int = 10
     event_type: dict[EventType, int] = Field(
@@ -121,6 +145,10 @@ class ScoringConfig(BaseModel):
             EventType.RELEASED: 30,
             EventType.DEMO: 25,
             EventType.DELAY: 20,
+            EventType.LOCALIZATION: 20,
+            EventType.PATCH: 10,
+            EventType.TRAILER: 10,
+            EventType.DEVLOG: 10,
         }
     )
 
@@ -130,6 +158,7 @@ class AppConfig(BaseModel):
 
     follow: FollowConfig = Field(default_factory=FollowConfig)
     preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
+    discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     notification: NotificationConfig = Field(default_factory=NotificationConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
 
