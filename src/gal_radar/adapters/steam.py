@@ -133,10 +133,11 @@ class SteamNewsAdapter:
             source_event_id=f"{app.app_id}:{item.gid}",
             vn_id=app.vn_id,
             developer_names=developer_names,
+            tags=item.tags,
             event_type=event_type,
             title=app.title,
             summary=_summarize(item.title, item.contents),
-            url=item.url,
+            url=item.url or f"https://store.steampowered.com/news/app/{app.app_id}",
             published_at=datetime.fromtimestamp(item.date, tz=UTC),
             metadata=metadata,
         )
@@ -156,6 +157,8 @@ def _classify_news(title: str, contents: str, tags: list[str]) -> EventType:
         ("demo", "体験版", "體驗版", "试玩版", "trial version"),
     ):
         return EventType.DEMO
+    if _contains_any(haystack, ("devlog", "developer update", "開発日誌", "開發日誌")):
+        return EventType.DEVLOG
     if _contains_any(
         haystack,
         ("patch", "hotfix", "update", "更新", "アップデート", "version ", "ver."),
@@ -176,8 +179,6 @@ def _classify_news(title: str, contents: str, tags: list[str]) -> EventType:
         ),
     ):
         return EventType.RELEASED
-    if _contains_any(haystack, ("devlog", "developer update", "開発日誌", "開發日誌")):
-        return EventType.DEVLOG
     return EventType.OTHER
 
 
