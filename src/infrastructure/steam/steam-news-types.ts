@@ -62,8 +62,11 @@ function parseSteamNewsItem(
 
   if (
     typeof gid !== "string" ||
+    gid.trim() === "" ||
     typeof title !== "string" ||
+    title.trim() === "" ||
     typeof url !== "string" ||
+    url.trim() === "" ||
     typeof date !== "number" ||
     !Number.isFinite(date) ||
     typeof contents !== "string"

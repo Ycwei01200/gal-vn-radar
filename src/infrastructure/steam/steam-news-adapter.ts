@@ -3,6 +3,9 @@ import { eventKeys, type Event } from "../../domain/event.js";
 import type { SteamAppMapping } from "../../config/steam-app-mappings.js";
 import { parseSteamNewsResponse } from "./steam-news-types.js";
 
+const MAX_NEWS_COUNT = 100;
+const MAX_NEWS_LENGTH = 10_000;
+
 export interface SteamNewsAdapterOptions {
   readonly count?: number;
   readonly maxLength?: number;
@@ -22,10 +25,15 @@ export class SteamNewsAdapter implements SourceAdapter {
     options: SteamNewsAdapterOptions = {},
   ) {
     this.#mappings = mappings;
-    this.#count = positiveIntegerOption(options.count ?? 20, "count");
-    this.#maxLength = positiveIntegerOption(
+    this.#count = boundedPositiveIntegerOption(
+      options.count ?? 20,
+      "count",
+      MAX_NEWS_COUNT,
+    );
+    this.#maxLength = boundedPositiveIntegerOption(
       options.maxLength ?? 300,
       "maxLength",
+      MAX_NEWS_LENGTH,
     );
     this.#fetchImpl = options.fetchImpl ?? fetch;
   }
@@ -35,7 +43,15 @@ export class SteamNewsAdapter implements SourceAdapter {
     const seenKeys = new Set<string>();
 
     for (const mapping of this.#mappings) {
-      const response = await this.#fetchImpl(this.#buildUrl(mapping.appId));
+      let response: Response;
+
+      try {
+        response = await this.#fetchImpl(this.#buildUrl(mapping.appId));
+      } catch (error) {
+        throw new Error(`Steam news request failed for app ${mapping.appId}`, {
+          cause: error,
+        });
+      }
 
       if (!response.ok) {
         throw new Error(
@@ -96,9 +112,15 @@ export class SteamNewsAdapter implements SourceAdapter {
   }
 }
 
-function positiveIntegerOption(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`Steam news ${name} must be a positive integer`);
+function boundedPositiveIntegerOption(
+  value: number,
+  name: string,
+  maximum: number,
+): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(
+      `Steam news ${name} must be an integer between 1 and ${maximum}`,
+    );
   }
 
   return value;

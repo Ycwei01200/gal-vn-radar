@@ -208,6 +208,57 @@ describe("SteamNewsAdapter", () => {
       /maxLength/,
     );
   });
+
+  it("rejects request options above the safe bounds", () => {
+    const mapping = [{ appId: 324160, vnId: VN_ENTITIES.clannad.id }];
+
+    expect(() => new SteamNewsAdapter(mapping, { count: 101 })).toThrow(
+      /count/,
+    );
+    expect(() => new SteamNewsAdapter(mapping, { maxLength: 10_001 })).toThrow(
+      /maxLength/,
+    );
+  });
+
+  it("preserves the app ID when the injected fetch rejects", async () => {
+    const adapter = new SteamNewsAdapter(
+      [{ appId: 324160, vnId: VN_ENTITIES.clannad.id }],
+      {
+        fetchImpl: async () => {
+          throw new Error("network down");
+        },
+      },
+    );
+
+    await expect(adapter.fetchEvents()).rejects.toThrow(/324160/);
+  });
+
+  it.each(["gid", "title", "url"] as const)(
+    "rejects a blank %s in a Steam news item",
+    async (field) => {
+      const item: SteamFixtureItem = {
+        gid: "steam-gid-1",
+        title: "Major Update",
+        url: "https://steamcommunity.com/news/steam-gid-1",
+        date: 1786752000,
+        contents: "Update details",
+        feedname: "steam_community_announcements",
+      };
+      const blankItem: SteamFixtureItem = { ...item, [field]: "   " };
+
+      const adapter = new SteamNewsAdapter(
+        [{ appId: 324160, vnId: VN_ENTITIES.clannad.id }],
+        {
+          fetchImpl: async () =>
+            jsonResponse({
+              appnews: { appid: 324160, newsitems: [blankItem] },
+            }),
+        },
+      );
+
+      await expect(adapter.fetchEvents()).rejects.toThrow(/324160/);
+    },
+  );
 });
 
 async function loadFixture(name: string): Promise<SteamFixture> {

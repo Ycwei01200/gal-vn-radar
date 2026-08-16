@@ -74,6 +74,19 @@ describe("EventIngestService", () => {
     });
   });
 
+  it("keeps the zh-TW message shape when an event has no summary", async () => {
+    const { service, sink } = createSubject();
+
+    await service.ingest([{ ...steamEvent, summary: null }]);
+
+    expect(sink.messages[0]).toEqual({
+      locale: "zh-TW",
+      title: "【CLANNAD】Major Update",
+      body: `\n${steamEvent.url}`,
+      url: steamEvent.url,
+    });
+  });
+
   it("falls back to title and UTC day when equivalent events use different URLs", async () => {
     const { repository, service, sink } = createSubject();
     const existingOtherSourceEvent: Event = {
