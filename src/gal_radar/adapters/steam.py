@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -10,6 +11,8 @@ from gal_radar.adapters.base import SourceAdapterError
 from gal_radar.config import FollowConfig, SteamAppConfig
 from gal_radar.models.event import SourceEvent
 from gal_radar.services.news_classifier import classify_news, extract_release_date, summarize_text
+
+logger = logging.getLogger(__name__)
 
 STEAM_NEWS_URL = "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
 STEAM_TIMEOUT_SECONDS = 15.0
@@ -78,8 +81,13 @@ class SteamNewsAdapter:
     ) -> list[SourceEvent]:
         events: list[SourceEvent] = []
         for app in follow.steam_apps:
-            response = await self._get_news(client, app.app_id)
-            events.extend(self._to_source_event(app, item) for item in response.appnews.newsitems)
+            try:
+                response = await self._get_news(client, app.app_id)
+                events.extend(
+                    self._to_source_event(app, item) for item in response.appnews.newsitems
+                )
+            except Exception:
+                logger.exception("Steam app failed app_id=%s", app.app_id)
         return events
 
     async def _get_news(self, client: _HttpClient, app_id: int) -> _SteamNewsResponse:

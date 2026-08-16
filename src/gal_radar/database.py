@@ -54,6 +54,7 @@ class EventRecord(Base):
     notification_status: Mapped[str] = mapped_column(
         String(32), default=NotificationStatus.PENDING.value, nullable=False
     )
+    corroborating_sources: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
 
 class SourceSnapshotRecord(Base):
@@ -97,9 +98,17 @@ class EventStore:
         if self.engine.dialect.name != "sqlite":
             return
         columns = {column["name"] for column in inspect(self.engine).get_columns("events")}
-        if "image_url" not in columns:
-            with self.engine.begin() as connection:
+        with self.engine.begin() as connection:
+            if "image_url" not in columns:
                 connection.execute(text("ALTER TABLE events ADD COLUMN image_url TEXT"))
+            if "corroborating_sources" not in columns:
+                connection.execute(text("ALTER TABLE events ADD COLUMN corroborating_sources JSON"))
+                connection.execute(
+                    text(
+                        "UPDATE events SET corroborating_sources = '[]' "
+                        "WHERE corroborating_sources IS NULL"
+                    )
+                )
 
     def find_equivalent(self, event: NormalizedEvent) -> EventRecord | None:
         with Session(self.engine) as session:
@@ -141,6 +150,21 @@ class EventStore:
             session.refresh(record)
             session.expunge(record)
         return record
+
+    def add_corroborating_source(self, event_id: int, source_info: dict[str, Any]) -> None:
+        with Session(self.engine) as session:
+            record = session.get(EventRecord, event_id)
+            if record is None:
+                raise RuntimeError(f"Event not found: {event_id}")
+            
+            # Check if this source_event_id is already in the list to maintain idempotency
+            existing_ids = {s.get("source_event_id") for s in record.corroborating_sources}
+            if source_info.get("source_event_id") not in existing_ids:
+                # SQLAlchemy JSON mutations require reassignment or flag_modified
+                sources = list(record.corroborating_sources)
+                sources.append(source_info)
+                record.corroborating_sources = sources
+                session.commit()
 
     def get_snapshot(self, source: str, entity_key: str) -> SourceSnapshotState | None:
         with Session(self.engine) as session:

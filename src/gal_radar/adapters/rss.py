@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import UTC, datetime
 from time import mktime
 from typing import Any, Protocol
@@ -12,6 +13,8 @@ from gal_radar.adapters.base import SourceAdapterError
 from gal_radar.config import FeedConfig, FollowConfig
 from gal_radar.models.event import SourceEvent
 from gal_radar.services.news_classifier import classify_news, extract_release_date, summarize_text
+
+logger = logging.getLogger(__name__)
 
 RSS_TIMEOUT_SECONDS = 15.0
 
@@ -40,11 +43,17 @@ class RSSAdapter:
         events: list[SourceEvent] = []
         if self._client is not None:
             for feed in follow.feeds:
-                events.extend(await self._fetch_feed(self._client, feed))
+                try:
+                    events.extend(await self._fetch_feed(self._client, feed))
+                except Exception:
+                    logger.exception("RSS feed failed url=%s", feed.url)
         else:
             async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
                 for feed in follow.feeds:
-                    events.extend(await self._fetch_feed(client, feed))
+                    try:
+                        events.extend(await self._fetch_feed(client, feed))
+                    except Exception:
+                        logger.exception("RSS feed failed url=%s", feed.url)
         return events
 
     async def _fetch_feed(self, client: _HttpClient, feed: FeedConfig) -> list[SourceEvent]:

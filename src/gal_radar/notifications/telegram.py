@@ -155,7 +155,13 @@ def render_zh_tw_notification(event: EventRecord) -> str:
         lines.extend(["", "你可能會感興趣，因為："])
         lines.extend(f"・{_translate_reason(reason)}" for reason in event.relevance_reasons)
 
-    lines.extend(["", "🔗 查看來源", event.url])
+    sources = [event.source]
+    for corroboration in getattr(event, "corroborating_sources", None) or []:
+        if "source" in corroboration and corroboration["source"] not in sources:
+            sources.append(corroboration["source"])
+    source_names = "、".join(_source_display(s) for s in sources)
+
+    lines.extend(["", f"來源：{source_names}", "🔗 查看來源", event.url])
     return "\n".join(lines)
 
 
@@ -165,7 +171,14 @@ def render_zh_tw_digest(events: list[EventRecord]) -> str:
     lines = ["📚 今日 Gal/VN Radar 摘要\n"]
     for i, event in enumerate(events, start=1):
         event_type = EventType(event.event_type)
-        lines.append(f"{i}. 《{event.title}》")
+        
+        sources = [event.source]
+        for corroboration in getattr(event, "corroborating_sources", None) or []:
+            if "source" in corroboration and corroboration["source"] not in sources:
+                sources.append(corroboration["source"])
+        source_names = "、".join(_source_display(s) for s in sources)
+
+        lines.append(f"{i}. 《{event.title}》 (來源：{source_names})")
         lines.append(_heading(event_type))
 
         release_date = event.metadata_json.get("release_date")
@@ -178,6 +191,16 @@ def render_zh_tw_digest(events: list[EventRecord]) -> str:
         lines.append("")
     lines.append(f"共 {len(events)} 則你可能感興趣的情報。")
     return "\n".join(lines)
+
+
+def _source_display(source: str) -> str:
+    if source == "vndb":
+        return "VNDB"
+    if source == "steam":
+        return "Steam"
+    if source == "rss":
+        return "官方 RSS"
+    return source
 
 
 def _heading(event_type: EventType) -> str:

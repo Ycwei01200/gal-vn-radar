@@ -4,9 +4,7 @@ import asyncio
 import hashlib
 
 import httpx
-import pytest
 
-from gal_radar.adapters.base import SourceAdapterError
 from gal_radar.adapters.rss import RSSAdapter
 from gal_radar.config import FeedConfig, FollowConfig
 from gal_radar.models.event import EventType
@@ -97,8 +95,8 @@ def test_rss_timeout_is_wrapped() -> None:
             raise httpx.ReadTimeout("timeout", request=request)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with pytest.raises(SourceAdapterError, match="timed out"):
-                await RSSAdapter(client).fetch_events(_follow())
+            events = await RSSAdapter(client).fetch_events(_follow())
+            assert events == []
 
     asyncio.run(run())
 
@@ -109,8 +107,8 @@ def test_rss_http_error_is_wrapped() -> None:
             return httpx.Response(500, content=b"Server error", request=request)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with pytest.raises(SourceAdapterError, match="failed for"):
-                await RSSAdapter(client).fetch_events(_follow())
+            events = await RSSAdapter(client).fetch_events(_follow())
+            assert events == []
 
     asyncio.run(run())
 
@@ -122,7 +120,37 @@ def test_malformed_feed_is_wrapped() -> None:
             return httpx.Response(200, content=b"\x00\x01\x02\x03", request=request)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with pytest.raises(SourceAdapterError, match="Malformed feed"):
-                await RSSAdapter(client).fetch_events(_follow())
+            events = await RSSAdapter(client).fetch_events(_follow())
+            assert events == []
+
+    asyncio.run(run())
+
+
+def test_rss_feed_failure_isolates_error() -> None:
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "fail" in str(request.url):
+                raise httpx.ReadTimeout("timeout", request=request)
+            feed_xml = """<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0">
+<channel>
+  <item>
+    <title>News item</title>
+    <link>https://example.com/news/123</link>
+  </item>
+</channel>
+</rss>"""
+            return httpx.Response(200, content=feed_xml.encode(), request=request)
+
+        follow = FollowConfig(
+            feeds=[
+                FeedConfig(url="https://example.com/fail.xml", vn_id="v1"),
+                FeedConfig(url="https://example.com/success.xml", vn_id="v2"),
+            ]
+        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            events = await RSSAdapter(client).fetch_events(follow)
+            assert len(events) == 1
+            assert events[0].vn_id == "v2"
 
     asyncio.run(run())

@@ -139,3 +139,18 @@ Use absolute paths in cron and provide the Telegram environment variables throug
 7. Register the adapter in `main.py` only after it is tested.
 
 itch.io RSS, developer RSS feeds, DLsite, Ci-en, Fantia, developer websites, digest scheduling, and LLM-based semantic deduplication remain deferred.
+
+## Manual RSS E2E Validation
+
+To manually validate a live RSS feed without spamming yourself with historical items:
+
+1. Configure a single RSS feed in your `config.yaml` using a real URL.
+2. Run `uv run python -m gal_radar.main fetch --config config.yaml` to establish the silent baseline. This fetches the feed and marks all existing items as seen, saving to `source_baselines` and `source_seen_items`.
+3. Run the same fetch command again. The system will skip the seen items and produce no new notifications.
+4. You can then use the `--dry-run` flag in the future to safely preview notifications if a new item is published to the feed.
+
+## Operational Hardening & Error Isolation
+
+- **Provenance & Corroboration**: If multiple sources report the same logical event (e.g., VNDB, Steam, and an official RSS feed), the system preserves the primary event while recording corroborating sources. Telegram notifications will display all sources (e.g., `來源：VNDB、Steam、官方 RSS`).
+- **Error Isolation**: The pipeline isolates failures at the smallest sensible unit. A failure in one Steam app or one RSS feed will log the error but allow other apps and feeds to process successfully. A failed source does not initialize its baseline, nor does it mark any unseen items as seen, ensuring safe retries on the next fetch.
+- **Digest Batching**: Digests are deterministically sorted (highest relevance score and most recent publish date first) and split into batches of 10 events per message to avoid exceeding Telegram message limits. Each batch is individually tracked and marked as `SENT` only upon successful delivery.

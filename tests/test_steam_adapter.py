@@ -6,7 +6,6 @@ import json
 import httpx
 import pytest
 
-from gal_radar.adapters.base import SourceAdapterError
 from gal_radar.adapters.steam import SteamNewsAdapter
 from gal_radar.config import FollowConfig, SteamAppConfig
 from gal_radar.models.event import EventType
@@ -120,8 +119,8 @@ def test_steam_timeout_is_wrapped() -> None:
             raise httpx.ReadTimeout("timeout", request=request)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with pytest.raises(SourceAdapterError, match="timed out"):
-                await SteamNewsAdapter(client).fetch_events(_follow())
+            events = await SteamNewsAdapter(client).fetch_events(_follow())
+            assert events == []
 
     asyncio.run(run())
 
@@ -157,5 +156,32 @@ def test_steam_request_uses_expected_limits() -> None:
         assert observed["count"] == "7"
         assert observed["maxlength"] == "600"
         assert observed["format"] == "json"
+
+    asyncio.run(run())
+
+
+def test_steam_app_failure_isolates_error() -> None:
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.params["appid"] == "123456":
+                raise httpx.ReadTimeout("timeout", request=request)
+            return httpx.Response(
+                200,
+                content=json.dumps(
+                    {"appnews": {"appid": int(request.url.params["appid"]), "newsitems": []}}
+                ).encode(),
+                request=request,
+            )
+
+        follow = FollowConfig(
+            steam_apps=[
+                SteamAppConfig(app_id=123456, vn_id="v1", title="Fail App"),
+                SteamAppConfig(app_id=654321, vn_id="v2", title="Success App"),
+            ]
+        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            # Should not raise exception, should return empty list (since success app has 0 news)
+            events = await SteamNewsAdapter(client).fetch_events(follow)
+            assert events == []
 
     asyncio.run(run())

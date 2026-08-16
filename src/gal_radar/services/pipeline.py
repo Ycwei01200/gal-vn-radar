@@ -39,12 +39,15 @@ class Pipeline:
     async def run(self) -> list[EventRecord]:
         processed: list[EventRecord] = []
         for adapter in self._adapters:
-            source_events = await adapter.fetch_events(self._config.follow)
-            logger.info("fetched %d events from %s", len(source_events), adapter.name)
-            if getattr(adapter, "mode", "snapshot") == "feed":
-                processed.extend(await self._run_feed(adapter.name, source_events))
-            else:
-                processed.extend(await self._run_snapshot(adapter.name, source_events))
+            try:
+                source_events = await adapter.fetch_events(self._config.follow)
+                logger.info("fetched %d events from %s", len(source_events), adapter.name)
+                if getattr(adapter, "mode", "snapshot") == "feed":
+                    processed.extend(await self._run_feed(adapter.name, source_events))
+                else:
+                    processed.extend(await self._run_snapshot(adapter.name, source_events))
+            except Exception:
+                logger.exception("source fetch failed source=%s", adapter.name)
         return processed
 
     async def _run_snapshot(
@@ -115,6 +118,7 @@ class Pipeline:
                     for event in events:
                         self._store.mark_source_item_seen(source, event.source_event_id)
                     self._store.mark_baseline_initialized(feed_key)
+                    logger.info("feed baseline initialized feed=%s", feed_key)
                 except Exception:
                     logger.exception("feed baseline initialization failed feed=%s", feed_key)
                 continue
@@ -148,8 +152,28 @@ class Pipeline:
         normalized = normalize_event(source_event)
         duplicate = find_duplicate(self._store, normalized)
         if duplicate is not None:
-            if duplicate.notification_status == NotificationStatus.SENT.value:
+            if (
+                duplicate.source != source_event.source
+                or duplicate.source_event_id != source_event.source_event_id
+            ):
+                corroboration = {
+                    "source": source_event.source,
+                    "source_event_id": source_event.source_event_id,
+                    "url": source_event.url,
+                    "published_at": (
+                        source_event.published_at.isoformat() if source_event.published_at else None
+                    ),
+                }
+                self._store.add_corroborating_source(duplicate.id, corroboration)
+                logger.info(
+                    "event duplicate event_id=%s source=%s corroborated=true",
+                    duplicate.id,
+                    source_event.source,
+                )
+            else:
                 logger.info("skipped duplicate event_id=%s", duplicate.id)
+
+            if duplicate.notification_status == NotificationStatus.SENT.value:
                 return None
             if (
                 duplicate.relevance_score >= self._config.notification.immediate_threshold
@@ -158,7 +182,6 @@ class Pipeline:
             ):
                 await self._deliver(duplicate)
                 return duplicate
-            logger.info("skipped duplicate event_id=%s", duplicate.id)
             return None
 
         score = score_event(normalized, self._config)
