@@ -11,14 +11,14 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, ValidationError
 
 from gal_radar.adapters.base import SourceAdapterError
-from gal_radar.config import FollowConfig
+from gal_radar.config import FollowConfig, SteamAppConfig
 from gal_radar.models.event import EventType, SourceEvent
 
 logger = logging.getLogger(__name__)
 
 VNDB_BASE_URL = "https://api.vndb.org/kana"
 VNDB_TIMEOUT_SECONDS = 15.0
-_MAX_RESULTS_PER_QUERY = 20
+_MAX_RESULTS_PER_QUERY = 100
 
 
 class _HttpClient(Protocol):
@@ -45,6 +45,14 @@ class _VNDBImage(BaseModel):
     url: HttpUrl | None = None
 
 
+class _VNDBExtLink(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: str | None = None
+    id: str | int | None = None
+    url: str
+
+
 class _VNDBVN(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -55,6 +63,7 @@ class _VNDBVN(BaseModel):
     developers: list[_VNDBDeveloper] = Field(default_factory=list)
     image: _VNDBImage | None = None
     tags: list[_VNDBTag] = Field(default_factory=list)
+    extlinks: list[_VNDBExtLink] = Field(default_factory=list)
 
 
 class _VNDBQueryResponse(BaseModel):
@@ -88,12 +97,18 @@ class VNDBAdapter:
         max_retries: int = 2,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        discovery_enabled: bool = False,
+        discovery_results: int = 50,
+        discover_steam: bool = True,
     ) -> None:
         self._client = client
         self._timeout = httpx.Timeout(timeout_seconds)
         self._max_retries = max_retries
         self._sleep = sleep
         self._now = now
+        self._discovery_enabled = discovery_enabled
+        self._discovery_results = min(max(discovery_results, 1), _MAX_RESULTS_PER_QUERY)
+        self._discover_steam = discover_steam
 
     async def fetch_events(self, follow: FollowConfig) -> list[SourceEvent]:
         if self._client is not None:
@@ -113,10 +128,7 @@ class VNDBAdapter:
 
         for item in follow.visual_novels:
             response = await self._query_vn(client, self._visual_novel_filter(item))
-            for vn in response.results:
-                if vn.id not in seen_vn_ids:
-                    seen_vn_ids.add(vn.id)
-                    vns.append(vn)
+            self._collect_vns(response.results, seen_vn_ids, vns)
 
         for developer_name in follow.developers:
             producer = await self._resolve_producer(client, developer_name)
@@ -131,13 +143,57 @@ class VNDBAdapter:
                 sort="released",
                 reverse=True,
             )
+            self._collect_vns(response.results, seen_vn_ids, vns)
+
+        if self._discovery_enabled:
+            response = await self._query_vn(
+                client,
+                [],
+                sort="released",
+                reverse=True,
+                results=self._discovery_results,
+            )
             for vn in response.results:
-                if vn.id not in seen_vn_ids:
-                    seen_vn_ids.add(vn.id)
-                    vns.append(vn)
+                follow.add_discovered_vn(vn.id)
+            self._collect_vns(response.results, seen_vn_ids, vns)
+            logger.info("VNDB auto-discovered %d recent titles", len(response.results))
 
         follow.set_resolved_developer_ids(resolved_developer_ids)
+        if self._discover_steam:
+            self._discover_steam_apps(follow, vns)
         return [self._to_source_event(vn) for vn in vns]
+
+    @staticmethod
+    def _collect_vns(
+        candidates: list[_VNDBVN],
+        seen_vn_ids: set[str],
+        output: list[_VNDBVN],
+    ) -> None:
+        for vn in candidates:
+            if vn.id not in seen_vn_ids:
+                seen_vn_ids.add(vn.id)
+                output.append(vn)
+
+    def _discover_steam_apps(self, follow: FollowConfig, vns: list[_VNDBVN]) -> None:
+        discovered = 0
+        for vn in vns:
+            app_id = _steam_app_id(vn.extlinks)
+            if app_id is None:
+                continue
+            before = len(follow.steam_apps)
+            developer = vn.developers[0].name if vn.developers else None
+            follow.add_discovered_steam_app(
+                SteamAppConfig(
+                    app_id=app_id,
+                    vn_id=vn.id,
+                    title=vn.alttitle or vn.title,
+                    developer=developer,
+                )
+            )
+            if len(follow.steam_apps) > before:
+                discovered += 1
+        if discovered:
+            logger.info("auto-discovered %d Steam app mappings from VNDB extlinks", discovered)
 
     async def _query_vn(
         self,
@@ -146,13 +202,17 @@ class VNDBAdapter:
         *,
         sort: str = "id",
         reverse: bool = False,
+        results: int = 20,
     ) -> _VNDBQueryResponse:
         payload = {
             "filters": filters,
-            "fields": "title,alttitle,released,developers{id,name},image{url},tags{id,name}",
+            "fields": (
+                "title,alttitle,released,developers{id,name},image{url},"
+                "tags{id,name},extlinks{name,id,url}"
+            ),
             "sort": sort,
             "reverse": reverse,
-            "results": _MAX_RESULTS_PER_QUERY,
+            "results": min(max(results, 1), _MAX_RESULTS_PER_QUERY),
         }
         data = await self._post_json(client, "/vn", payload)
         try:
@@ -229,6 +289,12 @@ class VNDBAdapter:
         developer_id = developer_ids[0] if developer_ids else None
         title = vn.alttitle or vn.title
         summary = _summary_for_release(vn.released)
+        metadata: dict[str, Any] = {}
+        if vn.released:
+            metadata["release_date"] = vn.released
+        steam_app_id = _steam_app_id(vn.extlinks)
+        if steam_app_id is not None:
+            metadata["steam_app_id"] = steam_app_id
         return SourceEvent(
             source=self.name,
             source_event_id=source_event_id,
@@ -242,7 +308,7 @@ class VNDBAdapter:
             summary=summary,
             url=f"https://vndb.org/{vn.id}",
             image_url=vn.image.url if vn.image else None,
-            metadata={"release_date": vn.released} if vn.released else {},
+            metadata=metadata,
         )
 
     @staticmethod
@@ -251,6 +317,20 @@ class VNDBAdapter:
         if re.fullmatch(r"v\d+", stripped, flags=re.IGNORECASE):
             return ["id", "=", stripped.lower()]
         return ["search", "=", stripped]
+
+
+def _steam_app_id(extlinks: list[_VNDBExtLink]) -> int | None:
+    for link in extlinks:
+        if (link.name or "").casefold() != "steam":
+            continue
+        if isinstance(link.id, int) and link.id > 0:
+            return link.id
+        if isinstance(link.id, str) and link.id.isdigit() and int(link.id) > 0:
+            return int(link.id)
+        match = re.search(r"store\.steampowered\.com/app/(\d+)", link.url, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def _event_type_for_release(value: str | None, today: date) -> EventType:
