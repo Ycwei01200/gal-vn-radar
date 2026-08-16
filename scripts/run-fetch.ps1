@@ -1,6 +1,7 @@
 param(
     [string]$ConfigPath,
-    [string]$DatabasePath
+    [string]$DatabasePath,
+    [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,12 +30,24 @@ if ([string]::IsNullOrWhiteSpace($env:TELEGRAM_CHAT_ID)) {
 }
 
 $Uv = Get-Command uv -ErrorAction Stop
+$args = @(
+    "run",
+    "python",
+    "-m",
+    "gal_radar.main",
+    "fetch",
+    "--config",
+    $ConfigPath,
+    "--database",
+    $DatabasePath
+)
+if ($DryRun) {
+    $args += "--dry-run"
+}
 
 Push-Location $RepoRoot
 try {
-    & $Uv.Source run python -m gal_radar.main fetch `
-        --config $ConfigPath `
-        --database $DatabasePath
+    & $Uv.Source @args
     $ExitCode = $LASTEXITCODE
 }
 finally {
