@@ -57,14 +57,20 @@ class ItchAdapter:
                 try:
                     events.extend(await self._fetch_feed(self._client, app))
                 except Exception:
-                    logger.exception("itch.io app failed url=%s", safe_url_for_log(str(app.url)))
+                    logger.exception(
+                        "itch.io app failed url=%s",
+                        safe_url_for_log(str(app.url)),
+                    )
         else:
             async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=False) as client:
                 for app in follow.itch_apps:
                     try:
                         events.extend(await self._fetch_feed(client, app))
                     except Exception:
-                        logger.exception("itch.io app failed url=%s", safe_url_for_log(str(app.url)))
+                        logger.exception(
+                            "itch.io app failed url=%s",
+                            safe_url_for_log(str(app.url)),
+                        )
         return events
 
     async def _fetch_feed(self, client: _HttpClient, app: ItchAppConfig) -> list[SourceEvent]:
