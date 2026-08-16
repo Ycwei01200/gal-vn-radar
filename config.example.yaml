@@ -1,0 +1,19 @@
+follow:
+  developers:
+    - ケロQ
+    - 枕
+    - ゆずソフト
+  visual_novels: []
+  tags:
+    - denpa
+    - nakige
+    - utsuge
+
+preferences:
+  languages:
+    - ja
+    - zh-Hant
+
+notification:
+  immediate_threshold: 70
+  digest_threshold: 40
