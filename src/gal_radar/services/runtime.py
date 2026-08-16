@@ -88,8 +88,12 @@ def status_lines(config: AppConfig, store: EventStore) -> list[str]:
         last_event = session.scalar(select(func.max(EventRecord.discovered_at)))
 
     with store.engine.connect() as connection:
-        baseline_count = connection.execute(text("SELECT COUNT(*) FROM source_baselines")).scalar_one()
-        seen_count = connection.execute(text("SELECT COUNT(*) FROM source_seen_items")).scalar_one()
+        baseline_count = connection.execute(
+            text("SELECT COUNT(*) FROM source_baselines")
+        ).scalar_one()
+        seen_count = connection.execute(
+            text("SELECT COUNT(*) FROM source_seen_items")
+        ).scalar_one()
 
     telegram_ready = bool(
         os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
