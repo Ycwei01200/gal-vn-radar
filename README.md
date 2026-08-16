@@ -8,10 +8,10 @@ Gal/VN Radar v1 is deployable on Windows with CLI commands scheduled by Windows 
 
 Implemented sources:
 
-- **VNDB**: snapshot-based VN and release-state tracking.
-- **Steam News**: configured Steam app news feeds.
-- **itch.io**: configured project devlog RSS feeds.
-- **RSS/Atom**: explicitly configured public feeds.
+- **VNDB**: snapshot-based VN and release-state tracking plus automatic recent-VN discovery.
+- **Steam News**: automatically mapped from VNDB external links when available; explicit mappings remain supported.
+- **itch.io**: automatically mapped from VNDB itch.io links when available; explicit mappings remain supported.
+- **RSS/Atom**: automatically picked up when VNDB exposes a direct feed-like external link; explicit public feeds remain supported.
 
 Deferred sources:
 
@@ -24,17 +24,23 @@ These are deferred because the project intentionally avoids authenticated scrapi
 ## Architecture
 
 ```text
-VNDB snapshot ------------------\
-Steam News feed -----------------\
-itch.io devlog RSS ---------------> SourceAdapter -> SourceEvent
-Configured RSS/Atom ------------/                    -> normalize
-                                                     -> baseline / seen items
-                                                     -> SQLite Event Store
-                                                     -> cross-source dedup
-                                                     -> provenance
-                                                     -> relevance scoring
-                                                     -> zh-TW renderer
-                                                     -> Telegram / Digest
+VNDB recent VN discovery
+        |
+        +--> VNDB snapshot tracking
+        +--> Steam extlink -> Steam News
+        +--> itch.io extlink -> devlog RSS
+        +--> feed-like extlink -> RSS/Atom
+                              |
+                              v
+                         SourceEvent
+                              -> normalize
+                              -> baseline / seen items
+                              -> SQLite Event Store
+                              -> cross-source dedup
+                              -> provenance
+                              -> relevance scoring
+                              -> zh-TW renderer
+                              -> Telegram / Digest
 ```
 
 VNDB uses snapshot/change-detection semantics. Its first successful fetch establishes a silent baseline. Later observations can produce `RELEASE_DATE`, `DELAY`, `RELEASED`, or `NEW_TITLE` events.
@@ -54,26 +60,26 @@ Keep `config.yaml` local and untracked.
 
 ## Configuration
 
+Auto-discovery is enabled by default. The manual `follow` mappings are overrides and preference hints rather than a prerequisite.
+
 ```yaml
 follow:
   developers:
     - visual arts
     - yuzusoft
-  visual_novels:
-    - v20431
+  visual_novels: []
   tags:
     - science fiction
-  steam_apps:
-    - app_id: 123450
-      vn_id: v123
-      title: "Example Game"
-  itch_apps:
-    - url: "https://example.itch.io/game"
-      vn_id: "v123"
-      title: "Example Game"
-  feeds:
-    - url: "https://example.com/rss.xml"
-      vn_id: "v123"
+  steam_apps: []
+  itch_apps: []
+  feeds: []
+
+discovery:
+  enabled: true
+  vndb_results: 50
+  steam_from_vndb_extlinks: true
+  itch_from_vndb_extlinks: true
+  feeds_from_vndb_extlinks: true
 
 preferences:
   languages:
@@ -83,9 +89,18 @@ preferences:
 notification:
   immediate_threshold: 70
   digest_threshold: 40
+  max_snapshot_release_age_days: 30
 ```
 
-`visual_novels` accepts a VNDB ID or title search string. Developer names are resolved through VNDB producer IDs for stable matching. Explicit mappings are preferred for Steam, itch.io, and feeds; no fuzzy title-to-VN matching is performed.
+`visual_novels` accepts a VNDB ID or title search string. Developer names are resolved through VNDB producer IDs for stable matching. Automatic source mapping relies on VNDB external-link identifiers and URLs; it deliberately avoids fuzzy title matching.
+
+### Auto-discovery scoring
+
+Explicitly followed VNs keep the strongest priority. Auto-discovered VNs receive a smaller relevance boost only for meaningful event types:
+
+- `NEW_TITLE`, `RELEASE_DATE`, `RELEASED`, `DELAY`, `DEMO`, `LOCALIZATION`: higher priority.
+- `PATCH`, `TRAILER`, `DEVLOG`: normally digest-level.
+- `OTHER`: no auto-discovery boost, avoiding notification spam.
 
 ## Telegram configuration
 
