@@ -34,7 +34,7 @@ $settings = New-ScheduledTaskSettingsSet `
 
 $fetchAction = New-ScheduledTaskAction `
     -Execute $PowerShell `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$FetchScript`"" `
+    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$FetchScript`"" `
     -WorkingDirectory $RepoRoot
 
 $fetchTrigger = New-ScheduledTaskTrigger `
@@ -45,7 +45,7 @@ $fetchTrigger = New-ScheduledTaskTrigger `
 
 $digestAction = New-ScheduledTaskAction `
     -Execute $PowerShell `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$DigestScript`"" `
+    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$DigestScript`"" `
     -WorkingDirectory $RepoRoot
 
 $digestTrigger = New-ScheduledTaskTrigger -Daily -At "20:00"
@@ -73,5 +73,6 @@ Get-ScheduledTask -TaskName $FetchTaskName, $DigestTaskName |
 
 Write-Host ""
 Write-Host "Default registration uses the current user's interactive token."
+Write-Host "Scheduled PowerShell windows are hidden."
 Write-Host "To run while logged out, open Task Scheduler and select"
 Write-Host "'Run whether user is logged on or not'; Windows will request your account password."
