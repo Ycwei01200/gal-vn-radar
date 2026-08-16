@@ -159,6 +159,27 @@ def render_zh_tw_notification(event: EventRecord) -> str:
     return "\n".join(lines)
 
 
+def render_zh_tw_digest(events: list[EventRecord]) -> str:
+    if not events:
+        return ""
+    lines = ["📚 今日 Gal/VN Radar 摘要\n"]
+    for i, event in enumerate(events, start=1):
+        event_type = EventType(event.event_type)
+        lines.append(f"{i}. 《{event.title}》")
+        lines.append(_heading(event_type))
+
+        release_date = event.metadata_json.get("release_date")
+        if isinstance(release_date, str) and release_date:
+            lines.append(f"{_release_label(event_type)}{_format_release_date(release_date)}")
+        elif event.summary:
+            lines.append(event.summary)
+        else:
+            lines.append("無詳細內容")
+        lines.append("")
+    lines.append(f"共 {len(events)} 則你可能感興趣的情報。")
+    return "\n".join(lines)
+
+
 def _heading(event_type: EventType) -> str:
     return {
         EventType.NEW_TITLE: "🆕 新作情報",

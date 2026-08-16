@@ -237,9 +237,38 @@ class EventStore:
             record.notification_status = status.value
             session.commit()
 
+    def update_notification_statuses(
+        self, event_ids: list[int], status: NotificationStatus
+    ) -> None:
+        if not event_ids:
+            return
+        with Session(self.engine) as session:
+            statement = select(EventRecord).where(EventRecord.id.in_(event_ids))
+            records = session.scalars(statement).all()
+            if len(records) != len(set(event_ids)):
+                raise RuntimeError(
+                    f"Some events not found, expected {len(set(event_ids))}, found {len(records)}"
+                )
+            for record in records:
+                record.notification_status = status.value
+            session.commit()
+
     def list_events(self) -> list[EventRecord]:
         with Session(self.engine) as session:
             records = list(session.scalars(select(EventRecord).order_by(EventRecord.id)))
+            for record in records:
+                session.expunge(record)
+            return records
+
+    def list_events_by_status(self, status: NotificationStatus) -> list[EventRecord]:
+        with Session(self.engine) as session:
+            records = list(
+                session.scalars(
+                    select(EventRecord)
+                    .where(EventRecord.notification_status == status.value)
+                    .order_by(EventRecord.id)
+                )
+            )
             for record in records:
                 session.expunge(record)
             return records

@@ -4,7 +4,15 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    PrivateAttr,
+    ValidationError,
+    model_validator,
+)
 
 from gal_radar.models.event import EventType
 
@@ -18,6 +26,21 @@ class SteamAppConfig(BaseModel):
     developer: str | None = None
 
 
+class FeedConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: HttpUrl
+    vn_id: str | None = None
+    title: str | None = None
+    developer: str | None = None
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> FeedConfig:
+        if not self.vn_id and not self.developer:
+            raise ValueError("Feed must specify either vn_id or developer")
+        return self
+
+
 class FollowConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -25,6 +48,7 @@ class FollowConfig(BaseModel):
     visual_novels: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     steam_apps: list[SteamAppConfig] = Field(default_factory=list)
+    feeds: list[FeedConfig] = Field(default_factory=list)
     _resolved_developer_ids: list[str] = PrivateAttr(default_factory=list)
 
     @property
