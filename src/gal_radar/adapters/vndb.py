@@ -39,6 +39,12 @@ class _VNDBTag(BaseModel):
     name: str
 
 
+class _VNDBImage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    url: str | None = None
+
+
 class _VNDBVN(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -47,6 +53,7 @@ class _VNDBVN(BaseModel):
     alttitle: str | None = None
     released: str | None = None
     developers: list[_VNDBDeveloper] = Field(default_factory=list)
+    image: _VNDBImage | None = None
     tags: list[_VNDBTag] = Field(default_factory=list)
 
 
@@ -101,6 +108,7 @@ class VNDBAdapter:
         follow: FollowConfig,
     ) -> list[SourceEvent]:
         seen_vn_ids: set[str] = set()
+        resolved_developer_ids: list[str] = []
         vns: list[_VNDBVN] = []
 
         for item in follow.visual_novels:
@@ -115,6 +123,8 @@ class VNDBAdapter:
             if producer is None:
                 logger.warning("VNDB producer not found name=%r", developer_name)
                 continue
+            if producer.id not in resolved_developer_ids:
+                resolved_developer_ids.append(producer.id)
             response = await self._query_vn(
                 client,
                 ["developer", "=", ["id", "=", producer.id]],
@@ -126,6 +136,7 @@ class VNDBAdapter:
                     seen_vn_ids.add(vn.id)
                     vns.append(vn)
 
+        follow.resolved_developer_ids = resolved_developer_ids
         return [self._to_source_event(vn) for vn in vns]
 
     async def _query_vn(
@@ -138,7 +149,7 @@ class VNDBAdapter:
     ) -> _VNDBQueryResponse:
         payload = {
             "filters": filters,
-            "fields": "title,alttitle,released,developers{id,name},tags{id,name}",
+            "fields": "title,alttitle,released,developers{id,name},image{url},tags{id,name}",
             "sort": sort,
             "reverse": reverse,
             "results": _MAX_RESULTS_PER_QUERY,
@@ -213,8 +224,9 @@ class VNDBAdapter:
         event_type = _event_type_for_release(vn.released, self._now().date())
         release_token = vn.released or "unknown"
         source_event_id = f"{vn.id}:{event_type.value}:{release_token}"
+        developer_ids = [developer.id for developer in vn.developers]
         developer_names = [developer.name for developer in vn.developers]
-        developer_id = vn.developers[0].id if vn.developers else None
+        developer_id = developer_ids[0] if developer_ids else None
         title = vn.alttitle or vn.title
         summary = _summary_for_release(vn.released)
         return SourceEvent(
@@ -222,12 +234,14 @@ class VNDBAdapter:
             source_event_id=source_event_id,
             vn_id=vn.id,
             developer_id=developer_id,
+            developer_ids=developer_ids,
             developer_names=developer_names,
             tags=[tag.name for tag in vn.tags],
             event_type=event_type,
             title=title,
             summary=summary,
             url=f"https://vndb.org/{vn.id}",
+            image_url=vn.image.url if vn.image else None,
             metadata={"release_date": vn.released} if vn.released else {},
         )
 

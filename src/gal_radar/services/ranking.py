@@ -23,12 +23,10 @@ def score_event(event: NormalizedEvent, config: AppConfig) -> ScoreResult:
         score += config.scoring.followed_vn
         reasons.append("followed visual novel")
 
-    followed_developers = {_normalized(item) for item in config.follow.developers}
-    for developer in event.developer_names:
-        if _normalized(developer) in followed_developers:
-            score += config.scoring.followed_developer
-            reasons.append(f"followed developer: {developer}")
-            break
+    matched_developer = _matched_followed_developer(event, config)
+    if matched_developer is not None:
+        score += config.scoring.followed_developer
+        reasons.append(f"followed developer: {matched_developer}")
 
     preferred_tags = {_normalized(item) for item in config.follow.tags}
     for tag in event.tags:
@@ -46,3 +44,24 @@ def score_event(event: NormalizedEvent, config: AppConfig) -> ScoreResult:
 
 def _normalized(value: str) -> str:
     return value.strip().casefold()
+
+
+def _matched_followed_developer(event: NormalizedEvent, config: AppConfig) -> str | None:
+    followed_developer_ids = {item.strip() for item in config.follow.resolved_developer_ids if item}
+    event_developer_ids = [item.strip() for item in event.developer_ids if item]
+    if followed_developer_ids and event_developer_ids:
+        for developer_id, developer_name in zip(
+            event_developer_ids, event.developer_names, strict=False
+        ):
+            if developer_id in followed_developer_ids:
+                return developer_name
+        for developer_id in event_developer_ids:
+            if developer_id in followed_developer_ids:
+                return developer_id
+        return None
+
+    followed_developers = {_normalized(item) for item in config.follow.developers}
+    for developer in event.developer_names:
+        if _normalized(developer) in followed_developers:
+            return developer
+    return None

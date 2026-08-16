@@ -13,6 +13,7 @@ class FollowConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     developers: list[str] = Field(default_factory=list)
+    resolved_developer_ids: list[str] = Field(default_factory=list)
     visual_novels: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
 

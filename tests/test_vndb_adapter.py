@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -57,13 +58,16 @@ def test_vndb_response_is_normalized_into_source_event() -> None:
 def test_vndb_developer_name_is_resolved_before_querying_vns() -> None:
     async def run() -> None:
         paths: list[str] = []
+        payloads: dict[str, dict[str, object]] = {}
+        follow = FollowConfig(developers=["枕"])
 
         def handler(request: httpx.Request) -> httpx.Response:
             paths.append(request.url.path)
+            payloads[request.url.path] = json.loads(request.content.decode("utf-8"))
             if request.url.path.endswith("/producer"):
                 return httpx.Response(
                     200,
-                    json={"results": [{"id": "p30", "name": "枕"}]},
+                    json={"results": [{"id": "p30", "name": "Makura"}]},
                     request=request,
                 )
             return httpx.Response(
@@ -75,7 +79,8 @@ def test_vndb_developer_name_is_resolved_before_querying_vns() -> None:
                             "title": "Sakura no Toki",
                             "alttitle": "サクラノ刻",
                             "released": "2026-10-30",
-                            "developers": [{"id": "p30", "name": "枕"}],
+                            "developers": [{"id": "p30", "name": "Makura"}],
+                            "image": {"url": "https://t.vndb.org/cv/12/3456.jpg"},
                             "tags": [],
                         }
                     ]
@@ -84,10 +89,21 @@ def test_vndb_developer_name_is_resolved_before_querying_vns() -> None:
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            events = await VNDBAdapter(client).fetch_events(FollowConfig(developers=["枕"]))
+            events = await VNDBAdapter(client).fetch_events(follow)
 
         assert paths == ["/kana/producer", "/kana/vn"]
+        assert payloads["/kana/producer"]["filters"] == ["search", "=", "枕"]
+        assert payloads["/kana/vn"]["filters"] == ["developer", "=", ["id", "=", "p30"]]
+        assert payloads["/kana/vn"]["fields"] == (
+            "title,alttitle,released,developers{id,name},image{url},tags{id,name}"
+        )
+        assert follow.developers == ["枕"]
+        assert follow.resolved_developer_ids == ["p30"]
         assert events[0].vn_id == "v20431"
+        assert events[0].developer_id == "p30"
+        assert events[0].developer_ids == ["p30"]
+        assert events[0].developer_names == ["Makura"]
+        assert str(events[0].image_url) == "https://t.vndb.org/cv/12/3456.jpg"
 
     asyncio.run(run())
 
