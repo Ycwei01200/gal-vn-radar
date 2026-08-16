@@ -22,8 +22,11 @@ export class SteamNewsAdapter implements SourceAdapter {
     options: SteamNewsAdapterOptions = {},
   ) {
     this.#mappings = mappings;
-    this.#count = options.count ?? 20;
-    this.#maxLength = options.maxLength ?? 300;
+    this.#count = positiveIntegerOption(options.count ?? 20, "count");
+    this.#maxLength = positiveIntegerOption(
+      options.maxLength ?? 300,
+      "maxLength",
+    );
     this.#fetchImpl = options.fetchImpl ?? fetch;
   }
 
@@ -40,8 +43,17 @@ export class SteamNewsAdapter implements SourceAdapter {
         );
       }
 
-      const payload = await response.json();
-      const parsed = parseSteamNewsResponse(payload, mapping.appId);
+      let parsed: ReturnType<typeof parseSteamNewsResponse>;
+
+      try {
+        const payload = await response.json();
+        parsed = parseSteamNewsResponse(payload, mapping.appId);
+      } catch (error) {
+        throw new Error(
+          `Steam news payload failed for app ${mapping.appId}`,
+          { cause: error },
+        );
+      }
 
       for (const item of parsed.appnews.newsitems) {
         const event = this.#toEvent(mapping, item);
@@ -82,6 +94,14 @@ export class SteamNewsAdapter implements SourceAdapter {
       metadata: { appId: String(mapping.appId) },
     };
   }
+}
+
+function positiveIntegerOption(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`Steam news ${name} must be a positive integer`);
+  }
+
+  return value;
 }
 
 function normalizeSummary(contents: string): string | null {

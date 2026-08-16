@@ -180,6 +180,34 @@ describe("SteamNewsAdapter", () => {
 
     await expect(adapter.fetchEvents()).rejects.toThrow(/324160/);
   });
+
+  it("preserves the app ID when JSON parsing fails", async () => {
+    const adapter = new SteamNewsAdapter(
+      [{ appId: 324160, vnId: VN_ENTITIES.clannad.id }],
+      {
+        fetchImpl: async () =>
+          new Response("{", {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      },
+    );
+
+    await expect(adapter.fetchEvents()).rejects.toThrow(/324160/);
+  });
+
+  it("rejects non-positive or fractional request options", () => {
+    const mapping = [{ appId: 324160, vnId: VN_ENTITIES.clannad.id }];
+
+    expect(() => new SteamNewsAdapter(mapping, { count: 0 })).toThrow(/count/);
+    expect(() => new SteamNewsAdapter(mapping, { count: 1.5 })).toThrow(/count/);
+    expect(() => new SteamNewsAdapter(mapping, { maxLength: 0 })).toThrow(
+      /maxLength/,
+    );
+    expect(() => new SteamNewsAdapter(mapping, { maxLength: -1.5 })).toThrow(
+      /maxLength/,
+    );
+  });
 });
 
 async function loadFixture(name: string): Promise<SteamFixture> {
