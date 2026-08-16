@@ -112,6 +112,9 @@ def test_release_date_change_is_notified_once_and_unchanged_state_is_silent(even
 
         await pipeline.run()
         changed = await pipeline.run()
+        changed_snapshot = event_store.get_snapshot("vndb", "v20431")
+        assert changed_snapshot is not None
+        assert changed_snapshot.release_date.isoformat() == "2026-11-27"
         unchanged = await pipeline.run()
 
         assert len(changed) == 1
@@ -148,6 +151,9 @@ def test_tba_to_date_emits_release_date_and_advances_snapshot(event_store) -> No
 
         await pipeline.run()
         changed = await pipeline.run()
+        changed_snapshot = event_store.get_snapshot("vndb", "v20431")
+        assert changed_snapshot is not None
+        assert changed_snapshot.release_date.isoformat() == "2026-09-25"
         unchanged = await pipeline.run()
 
         assert changed[0].event_type == EventType.RELEASE_DATE.value
@@ -180,6 +186,10 @@ def test_unreleased_to_released_is_notified_once(event_store) -> None:
 
         await pipeline.run()
         first_release = await pipeline.run()
+        released_snapshot = event_store.get_snapshot("vndb", "v20431")
+        assert released_snapshot is not None
+        assert released_snapshot.release_state == "released"
+        assert released_snapshot.release_date.isoformat() == "2026-09-25"
         second_release = await pipeline.run()
 
         assert len(first_release) == 1
