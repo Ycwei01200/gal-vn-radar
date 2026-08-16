@@ -49,7 +49,7 @@ try {
     }
     Invoke-Check "scheduled tasks" {
         $Tasks = @(
-            Get-ScheduledTask -TaskName "GalVNRadar-Fetch" -ErrorAction Stop,
+            Get-ScheduledTask -TaskName "GalVNRadar-Fetch" -ErrorAction Stop
             Get-ScheduledTask -TaskName "GalVNRadar-Digest" -ErrorAction Stop
         )
         foreach ($Task in $Tasks) {
