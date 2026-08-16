@@ -1,0 +1,15 @@
+{
+  "appnews": {
+    "appid": 324160,
+    "newsitems": [
+      {
+        "gid": "steam-gid-1",
+        "title": "  Major Update  ",
+        "url": "https://steamcommunity.com/news/steam-gid-1",
+        "date": 1786752000,
+        "contents": "  Update details  ",
+        "feedname": "steam_community_announcements"
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "appnews": {
+    "appid": 303310,
+    "newsitems": [
+      {
+        "gid": "steam-gid-2",
+        "title": "  Anniversary Story Update  ",
+        "url": "https://steamcommunity.com/news/steam-gid-2",
+        "date": 1711670400,
+        "contents": "  New side stories are now available.  ",
+        "feedname": "steam_community_announcements"
+      }
+    ]
+  }
+}
