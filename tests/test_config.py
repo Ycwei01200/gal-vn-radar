@@ -43,3 +43,40 @@ def test_resolved_developer_ids_are_runtime_only_and_rejected_in_yaml(tmp_path) 
 
     assert config.follow.resolved_developer_ids == ["p30"]
     assert "resolved_developer_ids" not in config.model_dump()["follow"]
+
+
+def test_steam_app_mapping_is_parsed_from_yaml(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "follow:\n"
+        "  steam_apps:\n"
+        "    - app_id: 123456\n"
+        "      vn_id: v20431\n"
+        "      title: サクラノ刻\n"
+        "      developer: 枕\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert len(config.follow.steam_apps) == 1
+    mapping = config.follow.steam_apps[0]
+    assert mapping.app_id == 123456
+    assert mapping.vn_id == "v20431"
+    assert mapping.title == "サクラノ刻"
+    assert mapping.developer == "枕"
+
+
+def test_invalid_steam_app_id_fails_configuration(tmp_path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "follow:\n"
+        "  steam_apps:\n"
+        "    - app_id: 0\n"
+        "      vn_id: v20431\n"
+        "      title: サクラノ刻\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="app_id"):
+        load_config(path)
