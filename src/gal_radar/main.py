@@ -5,6 +5,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from gal_radar.adapters.steam import SteamNewsAdapter
 from gal_radar.adapters.vndb import VNDBAdapter
 from gal_radar.config import TelegramConfig, load_config
 from gal_radar.database import EventStore
@@ -37,10 +38,14 @@ async def run_fetch(*, config_path: str, database_path: str, dry_run: bool) -> N
         telegram = TelegramConfig.from_environment()
         notifier = TelegramNotifier(bot_token=telegram.bot_token, chat_id=telegram.chat_id)
 
+    adapters = [VNDBAdapter()]
+    if config.follow.steam_apps:
+        adapters.append(SteamNewsAdapter())
+
     pipeline = Pipeline(
         config=config,
         store=store,
-        adapters=[VNDBAdapter()],
+        adapters=adapters,
         notifier=notifier,
     )
     await pipeline.run()
