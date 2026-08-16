@@ -11,7 +11,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, ValidationError
 
 from gal_radar.adapters.base import SourceAdapterError
-from gal_radar.config import FollowConfig, SteamAppConfig
+from gal_radar.config import FeedConfig, FollowConfig, ItchAppConfig, SteamAppConfig
 from gal_radar.models.event import EventType, SourceEvent
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,8 @@ class VNDBAdapter:
         discovery_enabled: bool = False,
         discovery_results: int = 50,
         discover_steam: bool = True,
+        discover_itch: bool = True,
+        discover_feeds: bool = True,
     ) -> None:
         self._client = client
         self._timeout = httpx.Timeout(timeout_seconds)
@@ -109,6 +111,8 @@ class VNDBAdapter:
         self._discovery_enabled = discovery_enabled
         self._discovery_results = min(max(discovery_results, 1), _MAX_RESULTS_PER_QUERY)
         self._discover_steam = discover_steam
+        self._discover_itch = discover_itch
+        self._discover_feeds = discover_feeds
 
     async def fetch_events(self, follow: FollowConfig) -> list[SourceEvent]:
         if self._client is not None:
@@ -159,8 +163,7 @@ class VNDBAdapter:
             logger.info("VNDB auto-discovered %d recent titles", len(response.results))
 
         follow.set_resolved_developer_ids(resolved_developer_ids)
-        if self._discover_steam:
-            self._discover_steam_apps(follow, vns)
+        self._discover_external_sources(follow, vns)
         return [self._to_source_event(vn) for vn in vns]
 
     @staticmethod
@@ -174,26 +177,62 @@ class VNDBAdapter:
                 seen_vn_ids.add(vn.id)
                 output.append(vn)
 
-    def _discover_steam_apps(self, follow: FollowConfig, vns: list[_VNDBVN]) -> None:
-        discovered = 0
+    def _discover_external_sources(self, follow: FollowConfig, vns: list[_VNDBVN]) -> None:
+        steam_count = 0
+        itch_count = 0
+        feed_count = 0
         for vn in vns:
-            app_id = _steam_app_id(vn.extlinks)
-            if app_id is None:
-                continue
-            before = len(follow.steam_apps)
             developer = vn.developers[0].name if vn.developers else None
-            follow.add_discovered_steam_app(
-                SteamAppConfig(
-                    app_id=app_id,
-                    vn_id=vn.id,
-                    title=vn.alttitle or vn.title,
-                    developer=developer,
-                )
+            title = vn.alttitle or vn.title
+
+            if self._discover_steam:
+                app_id = _steam_app_id(vn.extlinks)
+                if app_id is not None:
+                    before = len(follow.steam_apps)
+                    follow.add_discovered_steam_app(
+                        SteamAppConfig(
+                            app_id=app_id,
+                            vn_id=vn.id,
+                            title=title,
+                            developer=developer,
+                        )
+                    )
+                    steam_count += int(len(follow.steam_apps) > before)
+
+            if self._discover_itch:
+                itch_url = _itch_game_url(vn.extlinks)
+                if itch_url is not None:
+                    before = len(follow.itch_apps)
+                    follow.add_discovered_itch_app(
+                        ItchAppConfig(
+                            url=itch_url,
+                            vn_id=vn.id,
+                            title=title,
+                            developer=developer,
+                        )
+                    )
+                    itch_count += int(len(follow.itch_apps) > before)
+
+            if self._discover_feeds:
+                for feed_url in _feed_urls(vn.extlinks):
+                    before = len(follow.feeds)
+                    follow.add_discovered_feed(
+                        FeedConfig(
+                            url=feed_url,
+                            vn_id=vn.id,
+                            title=title,
+                            developer=developer,
+                        )
+                    )
+                    feed_count += int(len(follow.feeds) > before)
+
+        if steam_count or itch_count or feed_count:
+            logger.info(
+                "auto-discovered external mappings steam=%d itch=%d feeds=%d",
+                steam_count,
+                itch_count,
+                feed_count,
             )
-            if len(follow.steam_apps) > before:
-                discovered += 1
-        if discovered:
-            logger.info("auto-discovered %d Steam app mappings from VNDB extlinks", discovered)
 
     async def _query_vn(
         self,
@@ -331,6 +370,23 @@ def _steam_app_id(extlinks: list[_VNDBExtLink]) -> int | None:
         if match:
             return int(match.group(1))
     return None
+
+
+def _itch_game_url(extlinks: list[_VNDBExtLink]) -> str | None:
+    for link in extlinks:
+        if re.match(r"https?://[^/]+\.itch\.io/[^/?#]+/?$", link.url, flags=re.IGNORECASE):
+            return link.url.rstrip("/")
+    return None
+
+
+def _feed_urls(extlinks: list[_VNDBExtLink]) -> list[str]:
+    urls: list[str] = []
+    for link in extlinks:
+        lowered = link.url.casefold()
+        if lowered.endswith((".rss", ".atom", ".xml")) or "/feed" in lowered or "rss" in lowered:
+            if link.url not in urls:
+                urls.append(link.url)
+    return urls
 
 
 def _event_type_for_release(value: str | None, today: date) -> EventType:
