@@ -32,6 +32,14 @@ try {
             --config "$RepoRoot\config.yaml" `
             --database "$RepoRoot\data\gal_radar.db"
     }
+    Invoke-Check "doctor" {
+        & uv run python -m gal_radar.main doctor `
+            --config "$RepoRoot\config.yaml" `
+            --database "$RepoRoot\data\gal_radar.db"
+    }
+    Invoke-Check "Telegram command dry-run" {
+        & uv run python -m gal_radar.main test-telegram --dry-run
+    }
     Invoke-Check "fetch runner dry-run" {
         & "$RepoRoot\scripts\run-fetch.ps1" -DryRun
     }
