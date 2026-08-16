@@ -86,6 +86,9 @@ class PreferencesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     languages: list[str] = Field(default_factory=lambda: ["ja", "zh-Hant"])
+    source_priority: list[str] = Field(
+        default_factory=lambda: ["vndb", "steam", "itch.io", "rss"]
+    )
 
 
 class NotificationConfig(BaseModel):
@@ -93,11 +96,14 @@ class NotificationConfig(BaseModel):
 
     immediate_threshold: int = Field(default=70, ge=0)
     digest_threshold: int = Field(default=40, ge=0)
+    enabled_event_types: list[EventType] = Field(default_factory=lambda: list(EventType))
 
     @model_validator(mode="after")
     def validate_thresholds(self) -> NotificationConfig:
         if self.digest_threshold > self.immediate_threshold:
             raise ValueError("digest_threshold must be <= immediate_threshold")
+        if len(set(self.enabled_event_types)) != len(self.enabled_event_types):
+            raise ValueError("enabled_event_types must not contain duplicates")
         return self
 
 
