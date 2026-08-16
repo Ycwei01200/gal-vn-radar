@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import (
@@ -135,6 +136,7 @@ class NotificationConfig(BaseModel):
     digest_threshold: int = Field(default=40, ge=0)
     enabled_event_types: list[EventType] = Field(default_factory=lambda: list(EventType))
     max_snapshot_release_age_days: int = Field(default=30, ge=0)
+    image_delivery: Literal["photo", "document"] = "document"
 
     @model_validator(mode="after")
     def validate_thresholds(self) -> NotificationConfig:
