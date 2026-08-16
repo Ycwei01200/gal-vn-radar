@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from io import StringIO
 
 import httpx
@@ -81,6 +82,21 @@ def test_telegram_delivery_failure_is_explicit() -> None:
             with pytest.raises(TelegramDeliveryError, match="delivery request failed") as exc_info:
                 await notifier.send("message")
             assert "token" not in str(exc_info.value)
+
+    asyncio.run(run())
+
+
+def test_telegram_bot_token_is_not_written_to_httpx_logs(caplog) -> None:
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"ok": True}, request=request)
+
+        caplog.set_level(logging.INFO, logger="httpx")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            notifier = TelegramNotifier(bot_token="secret-token", chat_id="123", client=client)
+            await notifier.send("message")
+
+        assert all("secret-token" not in record.getMessage() for record in caplog.records)
 
     asyncio.run(run())
 

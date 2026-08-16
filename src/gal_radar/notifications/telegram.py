@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from datetime import date
 from typing import Any, Protocol, TextIO
@@ -41,6 +42,10 @@ class TelegramNotifier:
             print(message, file=self._stdout)
             return False
 
+        # HTTPX includes the full request URL in INFO logs; this URL contains
+        # the Telegram bot token, so request logging must not expose it.
+        httpx_logger = logging.getLogger("httpx")
+        httpx_logger.setLevel(max(httpx_logger.level, logging.WARNING))
         url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
         payload = {
             "chat_id": self._chat_id,
