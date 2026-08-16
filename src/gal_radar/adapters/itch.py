@@ -12,14 +12,23 @@ import httpx
 from gal_radar.adapters.base import SourceAdapterError
 from gal_radar.config import FollowConfig, ItchAppConfig
 from gal_radar.models.event import SourceEvent
+from gal_radar.services.http_safety import (
+    ResponseTooLargeError,
+    UnsafeUrlError,
+    fetch_limited_bytes,
+    safe_url_for_log,
+)
 from gal_radar.services.news_classifier import classify_news, extract_release_date, summarize_text
 
 logger = logging.getLogger(__name__)
 
 ITCH_TIMEOUT_SECONDS = 15.0
+ITCH_MAX_BYTES = 5 * 1024 * 1024
 
 
 class _HttpClient(Protocol):
+    def stream(self, method: str, url: str, **kwargs: Any) -> Any: ...
+
     async def get(self, url: str, **kwargs: Any) -> httpx.Response: ...
 
 
@@ -32,52 +41,58 @@ class ItchAdapter:
         client: _HttpClient | None = None,
         *,
         timeout_seconds: float = ITCH_TIMEOUT_SECONDS,
+        max_bytes: int = ITCH_MAX_BYTES,
     ) -> None:
         self._client = client
         self._timeout = httpx.Timeout(timeout_seconds)
+        self._max_bytes = max_bytes
 
     async def fetch_events(self, follow: FollowConfig) -> list[SourceEvent]:
         if not follow.itch_apps:
             return []
-        
+
         events: list[SourceEvent] = []
         if self._client is not None:
             for app in follow.itch_apps:
                 try:
                     events.extend(await self._fetch_feed(self._client, app))
                 except Exception:
-                    logger.exception("itch.io app failed url=%s", app.url)
+                    logger.exception("itch.io app failed url=%s", safe_url_for_log(str(app.url)))
         else:
-            async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=False) as client:
                 for app in follow.itch_apps:
                     try:
                         events.extend(await self._fetch_feed(client, app))
                     except Exception:
-                        logger.exception("itch.io app failed url=%s", app.url)
+                        logger.exception("itch.io app failed url=%s", safe_url_for_log(str(app.url)))
         return events
 
     async def _fetch_feed(self, client: _HttpClient, app: ItchAppConfig) -> list[SourceEvent]:
         base_url_str = str(app.url).rstrip("/")
         devlog_url = f"{base_url_str}/devlog.rss"
         try:
-            response = await client.get(devlog_url, timeout=self._timeout)
-            response.raise_for_status()
-        except httpx.TimeoutException as exc:
-            raise SourceAdapterError(f"itch.io request timed out for {devlog_url}") from exc
-        except httpx.HTTPError as exc:
-            raise SourceAdapterError(f"itch.io request failed for {devlog_url}") from exc
+            content, final_url, _ = await fetch_limited_bytes(
+                client,
+                devlog_url,
+                timeout=self._timeout,
+                max_bytes=self._max_bytes,
+            )
+        except (httpx.HTTPError, UnsafeUrlError, ResponseTooLargeError) as exc:
+            raise SourceAdapterError(
+                f"itch.io request rejected for {safe_url_for_log(devlog_url)}: {exc}"
+            ) from exc
 
-        parsed = feedparser.parse(response.content)
+        parsed = feedparser.parse(content)
         if parsed.bozo and parsed.bozo_exception:
-            raise SourceAdapterError(f"Malformed feed from {devlog_url}: {parsed.bozo_exception}")
+            raise SourceAdapterError(
+                f"Malformed feed from {safe_url_for_log(final_url)}: {parsed.bozo_exception}"
+            )
 
         feed_hash = hashlib.md5(base_url_str.encode("utf-8")).hexdigest()[:8]
-        events: list[SourceEvent] = []
-
-        for entry in parsed.entries:
-            events.append(self._to_source_event(app, base_url_str, devlog_url, feed_hash, entry))
-
-        return events
+        return [
+            self._to_source_event(app, base_url_str, devlog_url, feed_hash, entry)
+            for entry in parsed.entries
+        ]
 
     def _to_source_event(
         self,
@@ -90,23 +105,18 @@ class ItchAdapter:
         entry_title = entry.get("title", "Untitled")
         entry_link = entry.get("link", devlog_url)
         entry_summary = entry.get("summary", "") or entry.get("description", "")
-        
         entry_id = entry.get("id") or entry.get("guid") or entry_link
-        
-        tags = []
-        for tag in entry.get("tags", []):
-            if "term" in tag:
-                tags.append(tag["term"])
+        tags = [tag["term"] for tag in entry.get("tags", []) if "term" in tag]
 
         published_time = entry.get("published_parsed") or entry.get("updated_parsed")
-        if published_time:
-            published_at = datetime.fromtimestamp(mktime(published_time), tz=UTC)
-        else:
-            published_at = datetime.now(UTC)
+        published_at = (
+            datetime.fromtimestamp(mktime(published_time), tz=UTC)
+            if published_time
+            else datetime.now(UTC)
+        )
 
         event_type = classify_news(entry_title, entry_summary, tags)
         release_date = extract_release_date(f"{entry_title}\n{entry_summary}")
-        
         feed_key = f"itch:{base_url_str}"
         metadata: dict[str, Any] = {
             "feed_url": devlog_url,
@@ -118,7 +128,6 @@ class ItchAdapter:
             metadata["release_date"] = release_date
 
         developer_names = [app.developer] if app.developer else []
-        
         return SourceEvent(
             source=self.name,
             source_event_id=f"{feed_hash}:{entry_id}",
