@@ -4,7 +4,7 @@ import logging
 import re
 import sys
 from datetime import date
-from typing import Any, Protocol, TextIO
+from typing import Any, Literal, Protocol, TextIO
 from urllib.parse import urlparse
 
 import httpx
@@ -57,12 +57,14 @@ class TelegramNotifier:
         dry_run: bool = False,
         client: _HttpClient | None = None,
         stdout: TextIO | None = None,
+        image_delivery: Literal["photo", "document"] = "photo",
     ) -> None:
         self._bot_token = (bot_token or "").strip()
         self._chat_id = (chat_id or "").strip()
         self._dry_run = dry_run
         self._client = client
         self._stdout = stdout if stdout is not None else sys.stdout
+        self._image_delivery = image_delivery
         if not dry_run and (not self._bot_token or not self._chat_id):
             raise ValueError("Telegram bot token and chat ID are required when dry-run is disabled")
 
@@ -86,14 +88,14 @@ class TelegramNotifier:
         image_url: str | None,
     ) -> None:
         if _is_valid_image_url(image_url):
-            photo_url = f"https://api.telegram.org/bot{self._bot_token}/sendPhoto"
-            photo_payload = {
-                "chat_id": self._chat_id,
-                "photo": image_url,
-                "caption": message,
-            }
+            if self._image_delivery == "document":
+                try:
+                    await self._send_document(client, message, image_url)
+                    return
+                except TelegramDeliveryError:
+                    pass
             try:
-                await self._send_with_client(client, photo_url, photo_payload)
+                await self._send_photo(client, message, image_url)
                 return
             except TelegramDeliveryError:
                 pass
@@ -105,6 +107,34 @@ class TelegramNotifier:
             "disable_web_page_preview": True,
         }
         await self._send_with_client(client, text_url, text_payload)
+
+    async def _send_document(
+        self,
+        client: _HttpClient,
+        message: str,
+        image_url: str,
+    ) -> None:
+        document_url = f"https://api.telegram.org/bot{self._bot_token}/sendDocument"
+        payload = {
+            "chat_id": self._chat_id,
+            "document": image_url,
+            "caption": message,
+        }
+        await self._send_with_client(client, document_url, payload)
+
+    async def _send_photo(
+        self,
+        client: _HttpClient,
+        message: str,
+        image_url: str,
+    ) -> None:
+        photo_url = f"https://api.telegram.org/bot{self._bot_token}/sendPhoto"
+        payload = {
+            "chat_id": self._chat_id,
+            "photo": image_url,
+            "caption": message,
+        }
+        await self._send_with_client(client, photo_url, payload)
 
     @staticmethod
     async def _send_with_client(
@@ -255,6 +285,8 @@ def _format_release_date(value: str) -> str:
 def _translate_reason(reason: str) -> str:
     if reason == "followed visual novel":
         return "你正在追蹤這部作品"
+    if reason == "discovered visual novel":
+        return "這是 Radar 自動發現的近期 VN"
     if reason.startswith("followed developer: "):
         return f"你正在追蹤「{reason.removeprefix('followed developer: ')}」"
     if reason.startswith("matched tag: "):
