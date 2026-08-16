@@ -259,6 +259,32 @@ describe("SteamNewsAdapter", () => {
       await expect(adapter.fetchEvents()).rejects.toThrow(/324160/);
     },
   );
+
+  it("rejects an out-of-range timestamp with the app ID", async () => {
+    const adapter = new SteamNewsAdapter(
+      [{ appId: 324160, vnId: VN_ENTITIES.clannad.id }],
+      {
+        fetchImpl: async () =>
+          jsonResponse({
+            appnews: {
+              appid: 324160,
+              newsitems: [
+                {
+                  gid: "steam-gid-1",
+                  title: "Major Update",
+                  url: "https://steamcommunity.com/news/steam-gid-1",
+                  date: Number.MAX_VALUE,
+                  contents: "Update details",
+                  feedname: "steam_community_announcements",
+                },
+              ],
+            },
+          }),
+      },
+    );
+
+    await expect(adapter.fetchEvents()).rejects.toThrow(/324160/);
+  });
 });
 
 async function loadFixture(name: string): Promise<SteamFixture> {

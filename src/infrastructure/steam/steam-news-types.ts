@@ -69,12 +69,22 @@ function parseSteamNewsItem(
     url.trim() === "" ||
     typeof date !== "number" ||
     !Number.isFinite(date) ||
+    !isValidUnixTimestamp(date) ||
     typeof contents !== "string"
   ) {
     throw new Error(`Steam news item ${index} for app ${expectedAppId} is malformed`);
   }
 
   return { gid, title, url, date, contents };
+}
+
+function isValidUnixTimestamp(seconds: number): boolean {
+  const milliseconds = seconds * 1000;
+
+  return (
+    Number.isFinite(milliseconds) &&
+    !Number.isNaN(new Date(milliseconds).getTime())
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
