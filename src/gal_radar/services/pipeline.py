@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from gal_radar.adapters.base import SourceAdapter
 from gal_radar.config import AppConfig
@@ -201,7 +202,15 @@ class Pipeline:
 
         score = score_event(normalized, self._config)
         record = self._store.add(normalized, score)
-        if not self._event_type_enabled(normalized.event_type):
+        if self._is_stale_snapshot_release(source_event):
+            self._store.update_notification_status(record.id, NotificationStatus.SKIPPED)
+            record.notification_status = NotificationStatus.SKIPPED.value
+            logger.info(
+                "notification skipped event_id=%s reason=stale_snapshot_release release_date=%s",
+                record.id,
+                source_event.metadata.get("release_date"),
+            )
+        elif not self._event_type_enabled(normalized.event_type):
             self._store.update_notification_status(record.id, NotificationStatus.SKIPPED)
             record.notification_status = NotificationStatus.SKIPPED.value
             logger.info(
@@ -221,6 +230,19 @@ class Pipeline:
 
     def _event_type_enabled(self, event_type: EventType) -> bool:
         return event_type in self._config.notification.enabled_event_types
+
+    def _is_stale_snapshot_release(self, source_event: SourceEvent) -> bool:
+        if source_event.source != "vndb" or source_event.event_type is not EventType.RELEASED:
+            return False
+        raw_release_date = source_event.metadata.get("release_date")
+        if not isinstance(raw_release_date, str):
+            return False
+        try:
+            release_date = date.fromisoformat(raw_release_date)
+        except ValueError:
+            return False
+        age_days = (date.today() - release_date).days
+        return age_days > self._config.notification.max_snapshot_release_age_days
 
     async def _deliver(self, record: EventRecord) -> None:
         message = render_zh_tw_notification(
