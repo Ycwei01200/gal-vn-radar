@@ -8,3 +8,6 @@ __pycache__/
 config.yaml
 config.e2e.yaml
 config.single-e2e.yaml
+config.phase*-e2e.yaml
+logs/
+backups/

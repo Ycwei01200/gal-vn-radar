@@ -14,6 +14,9 @@ from gal_radar.database import EventStore
 from gal_radar.notifications.telegram import TelegramNotifier
 from gal_radar.services.digest import DigestService
 from gal_radar.services.pipeline import Pipeline
+from gal_radar.services.runtime import backup_sqlite, configure_logging, status_lines
+
+logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,37 +24,35 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     fetch = subparsers.add_parser("fetch", help="Fetch, score, store, and notify new events")
-    fetch.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Render notifications without Telegram",
-    )
+    fetch.add_argument("--dry-run", action="store_true", help="Render notifications without Telegram")
     fetch.add_argument("--config", default="config.yaml", help="Path to YAML configuration")
     fetch.add_argument("--database", default="data/gal_radar.db", help="Path to SQLite database")
 
     digest = subparsers.add_parser("digest", help="Send daily digest to Telegram")
-    digest.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Render digest without Telegram",
-    )
+    digest.add_argument("--dry-run", action="store_true", help="Render digest without Telegram")
     digest.add_argument("--config", default="config.yaml", help="Path to YAML configuration")
     digest.add_argument("--database", default="data/gal_radar.db", help="Path to SQLite database")
 
+    status = subparsers.add_parser("status", help="Inspect local Gal/VN Radar health")
+    status.add_argument("--config", default="config.yaml", help="Path to YAML configuration")
+    status.add_argument("--database", default="data/gal_radar.db", help="Path to SQLite database")
+
+    backup = subparsers.add_parser("backup", help="Create a consistent SQLite backup")
+    backup.add_argument("--database", default="data/gal_radar.db", help="Path to SQLite database")
+    backup.add_argument("--output", default="backups", help="Backup output directory")
     return parser
 
 
-async def run_fetch(*, config_path: str, database_path: str, dry_run: bool) -> None:
-    config = load_config(config_path)
+def _store(database_path: str) -> EventStore:
     store = EventStore(f"sqlite:///{Path(database_path)}")
     store.initialize()
+    return store
 
-    if dry_run:
-        notifier = TelegramNotifier(dry_run=True)
-    else:
-        telegram = TelegramConfig.from_environment()
-        notifier = TelegramNotifier(bot_token=telegram.bot_token, chat_id=telegram.chat_id)
 
+async def run_fetch(*, config_path: str, database_path: str, dry_run: bool) -> int:
+    config = load_config(config_path)
+    store = _store(database_path)
+    notifier = _notifier(dry_run)
     adapters = [VNDBAdapter()]
     if config.follow.steam_apps:
         adapters.append(SteamNewsAdapter())
@@ -60,49 +61,65 @@ async def run_fetch(*, config_path: str, database_path: str, dry_run: bool) -> N
     if config.follow.feeds:
         adapters.append(RSSAdapter())
 
-    pipeline = Pipeline(
-        config=config,
-        store=store,
-        adapters=adapters,
-        notifier=notifier,
-    )
+    pipeline = Pipeline(config=config, store=store, adapters=adapters, notifier=notifier)
     await pipeline.run()
+    if pipeline.successful_source_count == 0 and pipeline.failed_source_count > 0:
+        logger.error("fetch failed: all configured adapters failed")
+        return 1
+    return 0
 
 
-async def run_digest(*, config_path: str, database_path: str, dry_run: bool) -> None:
-    # config_path is unused but kept for CLI signature consistency
-    store = EventStore(f"sqlite:///{Path(database_path)}")
-    store.initialize()
-
-    if dry_run:
-        notifier = TelegramNotifier(dry_run=True)
-    else:
-        telegram = TelegramConfig.from_environment()
-        notifier = TelegramNotifier(bot_token=telegram.bot_token, chat_id=telegram.chat_id)
-
-    service = DigestService(store=store, notifier=notifier)
+async def run_digest(*, config_path: str, database_path: str, dry_run: bool) -> int:
+    load_config(config_path)
+    store = _store(database_path)
+    service = DigestService(store=store, notifier=_notifier(dry_run))
     await service.send_digest()
+    return 0
+
+
+def _notifier(dry_run: bool) -> TelegramNotifier:
+    if dry_run:
+        return TelegramNotifier(dry_run=True)
+    telegram = TelegramConfig.from_environment()
+    return TelegramNotifier(bot_token=telegram.bot_token, chat_id=telegram.chat_id)
+
+
+def run_status(*, config_path: str, database_path: str) -> int:
+    config = load_config(config_path)
+    store = _store(database_path)
+    for line in status_lines(config, store):
+        print(line)
+    return 0
+
+
+def run_backup(*, database_path: str, output: str) -> int:
+    destination = backup_sqlite(database_path, output)
+    print(destination)
+    return 0
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    configure_logging()
     args = build_parser().parse_args()
-    if args.command == "fetch":
-        asyncio.run(
-            run_fetch(
-                config_path=args.config,
-                database_path=args.database,
-                dry_run=args.dry_run,
+    try:
+        if args.command == "fetch":
+            code = asyncio.run(
+                run_fetch(config_path=args.config, database_path=args.database, dry_run=args.dry_run)
             )
-        )
-    elif args.command == "digest":
-        asyncio.run(
-            run_digest(
-                config_path=args.config,
-                database_path=args.database,
-                dry_run=args.dry_run,
+        elif args.command == "digest":
+            code = asyncio.run(
+                run_digest(config_path=args.config, database_path=args.database, dry_run=args.dry_run)
             )
-        )
+        elif args.command == "status":
+            code = run_status(config_path=args.config, database_path=args.database)
+        elif args.command == "backup":
+            code = run_backup(database_path=args.database, output=args.output)
+        else:
+            code = 2
+    except Exception as exc:
+        logger.exception("command failed command=%s error=%s", args.command, type(exc).__name__)
+        code = 1
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":
