@@ -14,8 +14,6 @@ if ([string]::IsNullOrWhiteSpace($DatabasePath)) {
     $DatabasePath = Join-Path $RepoRoot "data\gal_radar.db"
 }
 
-# Scheduled PowerShell processes may not inherit a newly updated user environment.
-# Re-read the two Telegram variables from the current user's persistent environment.
 if ([string]::IsNullOrWhiteSpace($env:TELEGRAM_BOT_TOKEN)) {
     $env:TELEGRAM_BOT_TOKEN = [Environment]::GetEnvironmentVariable(
         "TELEGRAM_BOT_TOKEN",
@@ -32,6 +30,7 @@ if ([string]::IsNullOrWhiteSpace($env:TELEGRAM_CHAT_ID)) {
 $Uv = Get-Command uv -ErrorAction Stop
 $args = @(
     "run",
+    "--locked",
     "python",
     "-m",
     "gal_radar.main",
