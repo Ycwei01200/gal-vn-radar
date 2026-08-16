@@ -5,7 +5,7 @@ import logging
 from gal_radar.adapters.base import SourceAdapter
 from gal_radar.config import AppConfig
 from gal_radar.database import EventRecord, EventStore
-from gal_radar.models.event import NotificationStatus, SourceEvent
+from gal_radar.models.event import EventType, NotificationStatus, SourceEvent
 from gal_radar.notifications.base import NotificationSink
 from gal_radar.notifications.telegram import render_zh_tw_notification
 from gal_radar.services.change_detection import detect_change, snapshot_from_event
@@ -143,10 +143,7 @@ class Pipeline:
                             duplicate is not None
                             and duplicate.notification_status in _TERMINAL_STATUSES
                         ):
-                            self._store.mark_source_item_seen(
-                                source,
-                                event.source_event_id,
-                            )
+                            self._store.mark_source_item_seen(source, event.source_event_id)
                         continue
                     if record.notification_status in _TERMINAL_STATUSES:
                         self._store.mark_source_item_seen(source, event.source_event_id)
@@ -186,6 +183,8 @@ class Pipeline:
                 )
             else:
                 logger.info("skipped duplicate event_id=%s", duplicate.id)
+            if not self._event_type_enabled(EventType(duplicate.event_type)):
+                return None
             if duplicate.notification_status == NotificationStatus.SENT.value:
                 return None
             retry_statuses = {
@@ -202,7 +201,15 @@ class Pipeline:
 
         score = score_event(normalized, self._config)
         record = self._store.add(normalized, score)
-        if score.score >= self._config.notification.immediate_threshold:
+        if not self._event_type_enabled(normalized.event_type):
+            self._store.update_notification_status(record.id, NotificationStatus.SKIPPED)
+            record.notification_status = NotificationStatus.SKIPPED.value
+            logger.info(
+                "notification skipped event_id=%s event_type=%s preference=disabled",
+                record.id,
+                normalized.event_type.value,
+            )
+        elif score.score >= self._config.notification.immediate_threshold:
             await self._deliver(record)
         elif score.score >= self._config.notification.digest_threshold:
             self._store.update_notification_status(record.id, NotificationStatus.DIGEST)
@@ -212,8 +219,14 @@ class Pipeline:
             record.notification_status = NotificationStatus.SKIPPED.value
         return record
 
+    def _event_type_enabled(self, event_type: EventType) -> bool:
+        return event_type in self._config.notification.enabled_event_types
+
     async def _deliver(self, record: EventRecord) -> None:
-        message = render_zh_tw_notification(record)
+        message = render_zh_tw_notification(
+            record,
+            source_priority=self._config.preferences.source_priority,
+        )
         try:
             try:
                 delivered = await self._notifier.send(message, image_url=record.image_url)
