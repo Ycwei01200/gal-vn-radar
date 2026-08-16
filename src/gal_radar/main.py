@@ -149,9 +149,10 @@ def run_doctor(*, config_path: str, database_path: str) -> int:
 
 async def run_test_telegram(*, dry_run: bool) -> int:
     message = "✅ Gal/VN Radar Telegram 測試成功"
-    delivered = await _notifier(dry_run).send(message)
     if dry_run:
+        print(message)
         return 0
+    delivered = await _notifier(False).send(message)
     return 0 if delivered else 1
 
 
