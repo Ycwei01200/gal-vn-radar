@@ -10,6 +10,7 @@ The MVP uses VNDB as its primary source, SQLite for persistence, deterministic s
 VNDB
   -> SourceAdapter
   -> SourceEvent / Normalizer
+  -> Baseline / Change Detector
   -> SQLite Event Store
   -> Deduplication
   -> Relevance Scoring
@@ -18,6 +19,8 @@ VNDB
 ```
 
 VNDB's official Kana API is query-oriented rather than a news feed. The adapter therefore converts current VN/release state into stable event identities. SQLite persistence makes repeated runs idempotent and allows changed states, such as a changed release date, to become new events.
+
+The first successful fetch establishes a silent baseline; it does not backfill historical notifications. Later observations can produce `RELEASE_DATE`, `DELAY`, `RELEASED`, or `NEW_TITLE` events. Failed or dry-run deliveries do not advance the source snapshot, so the same transition can be retried safely. Configured developer names are resolved to stable VNDB producer IDs for matching while the configured names remain human-readable.
 
 ## Setup
 
@@ -65,6 +68,8 @@ export TELEGRAM_CHAT_ID="..."
 ```
 
 See `.env.example` for the variable names. The application does not automatically load `.env`; use your shell, service manager, or secret manager to set environment variables.
+
+When VNDB provides a valid HTTP(S) cover URL, Telegram receives the notification through `sendPhoto` with the zh-TW notification as its caption. Missing or invalid images use `sendMessage`, and a failed photo request falls back to text. The text message remains the source of truth for dry-run output.
 
 ## Run a fetch
 
