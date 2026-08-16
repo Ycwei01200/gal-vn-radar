@@ -110,10 +110,10 @@ def test_doctor_reports_warnings_without_external_calls(
     assert "WARN TELEGRAM_CHAT_ID is missing" in output
 
 
-def test_test_telegram_dry_run_does_not_require_credentials(capsys) -> None:
+def test_test_telegram_dry_run_does_not_require_credentials(capfd) -> None:
     code = asyncio.run(run_test_telegram(dry_run=True))
 
-    output = capsys.readouterr().out
+    output = capfd.readouterr().out
     assert code == 0
     assert "Gal/VN Radar Telegram 測試成功" in output
 
