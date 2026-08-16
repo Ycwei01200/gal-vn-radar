@@ -9,12 +9,22 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError,
 from gal_radar.models.event import EventType
 
 
+class SteamAppConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    app_id: int = Field(gt=0)
+    vn_id: str
+    title: str
+    developer: str | None = None
+
+
 class FollowConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     developers: list[str] = Field(default_factory=list)
     visual_novels: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    steam_apps: list[SteamAppConfig] = Field(default_factory=list)
     _resolved_developer_ids: list[str] = PrivateAttr(default_factory=list)
 
     @property
