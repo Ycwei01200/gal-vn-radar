@@ -1,0 +1,13 @@
+{
+  "source": "vndb",
+  "source_event_id": "v20431:RELEASE_DATE:2026-11-27",
+  "vn_id": "v20431",
+  "developer_ids": ["p30"],
+  "developer_names": ["枕"],
+  "tags": ["nakige"],
+  "event_type": "RELEASE_DATE",
+  "title": "サクラノ刻",
+  "summary": "Release date: 2026-11-27",
+  "url": "https://vndb.org/v20431",
+  "metadata": {"release_date": "2026-11-27"}
+}

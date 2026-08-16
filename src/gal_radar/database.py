@@ -12,12 +12,15 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    inspect,
     or_,
     select,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from gal_radar.models.event import NormalizedEvent, NotificationStatus
+from gal_radar.services.change_detection import SourceSnapshotState
 from gal_radar.services.ranking import ScoreResult
 
 
@@ -40,6 +43,7 @@ class EventRecord(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     summary: Mapped[str | None] = mapped_column(Text)
     url: Mapped[str] = mapped_column(Text, nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     normalized_identity: Mapped[str] = mapped_column(String(1000), nullable=False, index=True)
@@ -52,6 +56,26 @@ class EventRecord(Base):
     )
 
 
+class SourceSnapshotRecord(Base):
+    __tablename__ = "source_snapshots"
+
+    source: Mapped[str] = mapped_column(String(50), primary_key=True)
+    entity_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    developer_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    release_date: Mapped[str | None] = mapped_column(String(10))
+    release_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SourceBaselineRecord(Base):
+    __tablename__ = "source_baselines"
+
+    source: Mapped[str] = mapped_column(String(50), primary_key=True)
+    initialized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class EventStore:
     def __init__(self, database_url: str = "sqlite:///data/gal_radar.db") -> None:
         if database_url.startswith("sqlite:///"):
@@ -62,6 +86,12 @@ class EventStore:
 
     def initialize(self) -> None:
         Base.metadata.create_all(self.engine)
+        if self.engine.dialect.name != "sqlite":
+            return
+        columns = {column["name"] for column in inspect(self.engine).get_columns("events")}
+        if "image_url" not in columns:
+            with self.engine.begin() as connection:
+                connection.execute(text("ALTER TABLE events ADD COLUMN image_url TEXT"))
 
     def find_equivalent(self, event: NormalizedEvent) -> EventRecord | None:
         with Session(self.engine) as session:
@@ -87,6 +117,7 @@ class EventStore:
             title=event.title,
             summary=event.summary,
             url=event.url,
+            image_url=event.image_url,
             published_at=event.published_at,
             discovered_at=event.discovered_at,
             normalized_identity=event.normalized_identity,
@@ -102,6 +133,61 @@ class EventStore:
             session.refresh(record)
             session.expunge(record)
         return record
+
+    def get_snapshot(self, source: str, entity_key: str) -> SourceSnapshotState | None:
+        with Session(self.engine) as session:
+            record = session.get(
+                SourceSnapshotRecord,
+                {"source": source, "entity_key": entity_key},
+            )
+            if record is None:
+                return None
+            return _snapshot_from_record(record)
+
+    def save_snapshot(self, source: str, snapshot: SourceSnapshotState) -> None:
+        with Session(self.engine) as session:
+            record = session.get(
+                SourceSnapshotRecord,
+                {"source": source, "entity_key": snapshot.entity_key},
+            )
+            if record is None:
+                record = SourceSnapshotRecord(
+                    source=source,
+                    entity_key=snapshot.entity_key,
+                )
+                session.add(record)
+            record.title = snapshot.title
+            record.developer_ids = list(snapshot.developer_ids)
+            record.release_date = (
+                snapshot.release_date.isoformat() if snapshot.release_date is not None else None
+            )
+            record.release_state = snapshot.release_state
+            record.image_url = snapshot.image_url
+            record.observed_at = snapshot.observed_at
+            session.commit()
+
+    def is_baseline_initialized(self, source: str) -> bool:
+        with Session(self.engine) as session:
+            return session.get(SourceBaselineRecord, source) is not None
+
+    def mark_baseline_initialized(
+        self,
+        source: str,
+        *,
+        initialized_at: datetime | None = None,
+    ) -> None:
+        timestamp = initialized_at or utc_now()
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise ValueError("initialized_at must be timezone-aware")
+        with Session(self.engine) as session:
+            if session.get(SourceBaselineRecord, source) is None:
+                session.add(
+                    SourceBaselineRecord(
+                        source=source,
+                        initialized_at=timestamp.astimezone(UTC),
+                    )
+                )
+                session.commit()
 
     def update_notification_status(self, event_id: int, status: NotificationStatus) -> None:
         with Session(self.engine) as session:
@@ -121,3 +207,20 @@ class EventStore:
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _snapshot_from_record(record: SourceSnapshotRecord) -> SourceSnapshotState:
+    from gal_radar.services.change_detection import parse_release_date
+
+    observed_at = record.observed_at
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        observed_at = observed_at.replace(tzinfo=UTC)
+    return SourceSnapshotState(
+        entity_key=record.entity_key,
+        title=record.title,
+        developer_ids=tuple(record.developer_ids),
+        release_date=parse_release_date(record.release_date),
+        release_state=record.release_state,
+        image_url=record.image_url,
+        observed_at=observed_at,
+    )

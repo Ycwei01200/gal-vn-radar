@@ -1,0 +1,12 @@
+{
+  "source": "vndb",
+  "source_event_id": "v20431:NEW_TITLE:unknown",
+  "vn_id": "v20431",
+  "developer_ids": ["p30"],
+  "developer_names": ["枕"],
+  "tags": ["nakige"],
+  "event_type": "NEW_TITLE",
+  "title": "サクラノ刻",
+  "url": "https://vndb.org/v20431",
+  "metadata": {"release_date": "TBA"}
+}

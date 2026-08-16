@@ -1,0 +1,12 @@
+{
+  "source": "vndb",
+  "source_event_id": "v30000:NEW_TITLE:unknown",
+  "vn_id": "v30000",
+  "developer_ids": ["p30"],
+  "developer_names": ["枕"],
+  "tags": [],
+  "event_type": "NEW_TITLE",
+  "title": "新しいタイトル",
+  "url": "https://vndb.org/v30000",
+  "metadata": {"release_date": "TBA"}
+}
