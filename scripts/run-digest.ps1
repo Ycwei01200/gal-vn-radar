@@ -30,6 +30,7 @@ if ([string]::IsNullOrWhiteSpace($env:TELEGRAM_CHAT_ID)) {
 $Uv = Get-Command uv -ErrorAction Stop
 $args = @(
     "run",
+    "--locked",
     "python",
     "-m",
     "gal_radar.main",
