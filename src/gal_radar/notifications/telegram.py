@@ -152,15 +152,15 @@ def render_zh_tw_notification(
     elif event.summary:
         lines.extend(["", event.summary])
 
-    lines.extend(["", f"關聯度：{event.relevance_score}"])
+    lines.extend(["", f"🔥 關聯度：{event.relevance_score}"])
     if event.relevance_reasons:
-        reasons = "、".join(_translate_reason(reason) for reason in event.relevance_reasons)
-        lines.append(f"原因：{reasons}")
+        lines.extend(["", "你可能會感興趣，因為："])
+        lines.extend(f"・{_translate_reason(reason)}" for reason in event.relevance_reasons)
 
     source_names = "、".join(
         _source_display(source) for source in _ordered_sources(event, source_priority)
     )
-    lines.extend(["", f"來源：{source_names}", event.url])
+    lines.extend(["", f"來源：{source_names}", "🔗 查看來源", event.url])
     return "\n".join(lines)
 
 
@@ -205,7 +205,10 @@ def _ordered_sources(
     if not source_priority:
         return sources
     priority = {source: index for index, source in enumerate(source_priority)}
-    return sorted(sources, key=lambda source: (priority.get(source, len(priority)), sources.index(source)))
+    return sorted(
+        sources,
+        key=lambda source: (priority.get(source, len(priority)), sources.index(source)),
+    )
 
 
 def _source_display(source: str) -> str:
@@ -251,19 +254,19 @@ def _format_release_date(value: str) -> str:
 
 def _translate_reason(reason: str) -> str:
     if reason == "followed visual novel":
-        return "追蹤中的作品"
+        return "你正在追蹤這部作品"
     if reason.startswith("followed developer: "):
-        return f"追蹤開發商「{reason.removeprefix('followed developer: ')}」"
+        return f"你正在追蹤「{reason.removeprefix('followed developer: ')}」"
     if reason.startswith("matched tag: "):
-        return f"偏好標籤「{reason.removeprefix('matched tag: ')}」"
+        return f"符合你偏好的「{reason.removeprefix('matched tag: ')}」標籤"
     if reason == "event type: RELEASE_DATE":
-        return "發售日異動"
+        return "這是一則發售日異動"
     if reason == "event type: RELEASED":
-        return "正式發售"
+        return "這部作品已正式發售"
     if reason == "event type: NEW_TITLE":
-        return "新作情報"
+        return "這是一則新作情報"
     if reason == "event type: DEMO":
-        return "體驗版情報"
+        return "這是一則體驗版情報"
     if reason == "event type: DELAY":
-        return "發售延期"
+        return "這是一則發售延期情報"
     return reason
