@@ -14,7 +14,7 @@ from gal_radar.services.ranking import ScoreResult
 
 class _FailingNotifier:
     async def send(self, *args, **kwargs):
-        raise AssertionError("disabled event type must not be delivered")
+        raise AssertionError("disabled or stale event must not be delivered")
 
 
 def test_disabled_event_type_is_stored_as_skipped(event_store) -> None:
@@ -41,6 +41,40 @@ def test_disabled_event_type_is_stored_as_skipped(event_store) -> None:
         event_type=EventType.PATCH,
         title="Example VN",
         url="https://example.com/patch-1",
+    )
+
+    record = asyncio.run(pipeline._process_one(event))
+
+    assert record is not None
+    assert record.relevance_score >= config.notification.immediate_threshold
+    assert record.notification_status == NotificationStatus.SKIPPED.value
+
+
+def test_stale_vndb_release_is_stored_as_skipped(event_store) -> None:
+    config = AppConfig.model_validate(
+        {
+            "follow": {"visual_novels": ["v1"]},
+            "notification": {
+                "immediate_threshold": 70,
+                "digest_threshold": 40,
+                "max_snapshot_release_age_days": 30,
+            },
+        }
+    )
+    pipeline = Pipeline(
+        config=config,
+        store=event_store,
+        adapters=[],
+        notifier=_FailingNotifier(),
+    )
+    event = SourceEvent(
+        source="vndb",
+        source_event_id="v1:RELEASED:2000-01-01",
+        vn_id="v1",
+        event_type=EventType.RELEASED,
+        title="Historical VN",
+        url="https://vndb.org/v1",
+        metadata={"release_date": "2000-01-01", "release_state": "released"},
     )
 
     record = asyncio.run(pipeline._process_one(event))
@@ -122,4 +156,5 @@ def test_default_phase4_preferences_are_backward_compatible() -> None:
     config = AppConfig()
 
     assert config.notification.enabled_event_types == list(EventType)
+    assert config.notification.max_snapshot_release_age_days == 30
     assert config.preferences.source_priority == ["vndb", "steam", "itch.io", "rss"]
