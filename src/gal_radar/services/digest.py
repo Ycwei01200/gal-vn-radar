@@ -44,7 +44,8 @@ class DigestService:
                 )
             else:
                 logger.info(
-                    "Suppressed %d stale VNDB release events from dry-run digest; database unchanged.",
+                    "Suppressed %d stale VNDB release events from dry-run digest; "
+                    "database unchanged.",
                     len(stale_events),
                 )
             stale_id_set = set(stale_ids)
