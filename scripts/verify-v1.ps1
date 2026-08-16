@@ -24,21 +24,22 @@ function Invoke-Check {
 
 Push-Location $RepoRoot
 try {
-    Invoke-Check "pytest" { & uv run pytest }
-    Invoke-Check "ruff" { & uv run ruff check . }
+    Invoke-Check "pytest" { & uv run --locked pytest }
+    Invoke-Check "ruff" { & uv run --locked ruff check . }
+    Invoke-Check "dependency audit" { & uv audit --locked }
     Invoke-Check "git diff --check" { & git diff --check }
     Invoke-Check "status" {
-        & uv run python -m gal_radar.main status `
+        & uv run --locked python -m gal_radar.main status `
             --config "$RepoRoot\config.yaml" `
             --database "$RepoRoot\data\gal_radar.db"
     }
     Invoke-Check "doctor" {
-        & uv run python -m gal_radar.main doctor `
+        & uv run --locked python -m gal_radar.main doctor `
             --config "$RepoRoot\config.yaml" `
             --database "$RepoRoot\data\gal_radar.db"
     }
     Invoke-Check "Telegram command dry-run" {
-        & uv run python -m gal_radar.main test-telegram --dry-run
+        & uv run --locked python -m gal_radar.main test-telegram --dry-run
     }
     Invoke-Check "fetch runner dry-run" {
         & "$RepoRoot\scripts\run-fetch.ps1" -DryRun
