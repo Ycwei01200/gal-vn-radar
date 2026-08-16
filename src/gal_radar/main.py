@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from typing import Literal
 
 from gal_radar.adapters.itch import ItchAdapter
 from gal_radar.adapters.rss import RSSAdapter
@@ -71,7 +72,10 @@ def _store(database_path: str) -> EventStore:
 async def run_fetch(*, config_path: str, database_path: str, dry_run: bool) -> int:
     config = load_config(config_path)
     store = _store(database_path)
-    notifier = _notifier(dry_run)
+    notifier = _notifier(
+        dry_run,
+        image_delivery=config.notification.image_delivery,
+    )
     adapters = [
         VNDBAdapter(
             discovery_enabled=config.discovery.enabled,
@@ -110,11 +114,19 @@ async def run_digest(*, config_path: str, database_path: str, dry_run: bool) -> 
     return 0
 
 
-def _notifier(dry_run: bool) -> TelegramNotifier:
+def _notifier(
+    dry_run: bool,
+    *,
+    image_delivery: Literal["photo", "document"] = "photo",
+) -> TelegramNotifier:
     if dry_run:
-        return TelegramNotifier(dry_run=True)
+        return TelegramNotifier(dry_run=True, image_delivery=image_delivery)
     telegram = TelegramConfig.from_environment()
-    return TelegramNotifier(bot_token=telegram.bot_token, chat_id=telegram.chat_id)
+    return TelegramNotifier(
+        bot_token=telegram.bot_token,
+        chat_id=telegram.chat_id,
+        image_delivery=image_delivery,
+    )
 
 
 def run_status(*, config_path: str, database_path: str) -> int:
