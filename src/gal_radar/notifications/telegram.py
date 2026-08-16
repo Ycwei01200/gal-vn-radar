@@ -142,13 +142,13 @@ def render_zh_tw_notification(
     source_priority: list[str] | None = None,
 ) -> str:
     event_type = EventType(event.event_type)
-    lines = [_heading(event_type), f"《{event.title}》"]
+    lines = [_heading(event_type), "", f"《{event.title}》"]
     if event.developer_names:
         lines.append(f"開發商：{'、'.join(event.developer_names)}")
 
     release_date = event.metadata_json.get("release_date")
     if isinstance(release_date, str) and release_date:
-        lines.extend(["", f"{_release_label(event_type)}{_format_release_date(release_date)}"])
+        lines.extend(["", _release_label(event_type), _format_release_date(release_date)])
     elif event.summary:
         lines.extend(["", event.summary])
 
@@ -171,13 +171,14 @@ def render_zh_tw_digest(
 ) -> str:
     if not events:
         return ""
-    lines = ["📚 今日 Gal/VN Radar 摘要", ""]
+    lines = ["📚 今日 Gal/VN Radar 摘要\n"]
     for i, event in enumerate(events, start=1):
         event_type = EventType(event.event_type)
         source_names = "、".join(
             _source_display(source) for source in _ordered_sources(event, source_priority)
         )
-        lines.append(f"{i}. 《{event.title}》｜{_heading(event_type)}")
+        lines.append(f"{i}. 《{event.title}》 (來源：{source_names})")
+        lines.append(_heading(event_type))
 
         release_date = event.metadata_json.get("release_date")
         if isinstance(release_date, str) and release_date:
@@ -186,7 +187,6 @@ def render_zh_tw_digest(
             lines.append(event.summary)
         else:
             lines.append("無詳細內容")
-        lines.append(f"來源：{source_names}")
         lines.append("")
     lines.append(f"共 {len(events)} 則你可能感興趣的情報。")
     return "\n".join(lines)
@@ -241,7 +241,7 @@ def _release_label(event_type: EventType) -> str:
         return "發售日："
     if event_type is EventType.DELAY:
         return "更新後發售日："
-    return "發售日："
+    return "📅 發售日更新"
 
 
 def _format_release_date(value: str) -> str:
