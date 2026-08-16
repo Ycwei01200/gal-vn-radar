@@ -9,12 +9,31 @@ follow:
     - nakige
     - utsuge
   steam_apps: []
+  itch_apps: []
+  feeds: []
 
 preferences:
   languages:
     - ja
     - zh-Hant
+  source_priority:
+    - vndb
+    - steam
+    - itch.io
+    - rss
 
 notification:
   immediate_threshold: 70
   digest_threshold: 40
+  enabled_event_types:
+    - NEW_TITLE
+    - RELEASE_DATE
+    - RELEASED
+    - DELAY
+    - DEMO
+    - PATCH
+    - LOCALIZATION
+    - STEAM_PAGE
+    - DEVLOG
+    - TRAILER
+    - OTHER
