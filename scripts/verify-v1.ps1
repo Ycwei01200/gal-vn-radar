@@ -56,7 +56,17 @@ try {
             if ($Task.State -eq "Disabled") {
                 throw "$($Task.TaskName) is disabled"
             }
-            Write-Host "$($Task.TaskName): $($Task.State)"
+
+            $Action = $Task.Actions | Select-Object -First 1
+            $Executable = [System.IO.Path]::GetFileName($Action.Execute)
+            if ($Executable -ine "wscript.exe") {
+                throw "$($Task.TaskName) does not use the windowless wscript launcher"
+            }
+            if ($Action.Arguments -notmatch "run-hidden\.vbs") {
+                throw "$($Task.TaskName) does not reference run-hidden.vbs"
+            }
+
+            Write-Host "$($Task.TaskName): $($Task.State), windowless"
         }
     }
 
