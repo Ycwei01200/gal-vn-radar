@@ -5,7 +5,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$PowerShell = (Get-Command powershell.exe -ErrorAction Stop).Source
+$WScript = (Get-Command wscript.exe -ErrorAction Stop).Source
+$HiddenLauncher = Join-Path $PSScriptRoot "run-hidden.vbs"
 $FetchScript = Join-Path $PSScriptRoot "run-fetch.ps1"
 $DigestScript = Join-Path $PSScriptRoot "run-digest.ps1"
 
@@ -33,8 +34,8 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew
 
 $fetchAction = New-ScheduledTaskAction `
-    -Execute $PowerShell `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$FetchScript`"" `
+    -Execute $WScript `
+    -Argument "`"$HiddenLauncher`" `"$FetchScript`"" `
     -WorkingDirectory $RepoRoot
 
 $fetchTrigger = New-ScheduledTaskTrigger `
@@ -44,8 +45,8 @@ $fetchTrigger = New-ScheduledTaskTrigger `
     -RepetitionDuration (New-TimeSpan -Days 3650)
 
 $digestAction = New-ScheduledTaskAction `
-    -Execute $PowerShell `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$DigestScript`"" `
+    -Execute $WScript `
+    -Argument "`"$HiddenLauncher`" `"$DigestScript`"" `
     -WorkingDirectory $RepoRoot
 
 $digestTrigger = New-ScheduledTaskTrigger -Daily -At "20:00"
@@ -73,6 +74,6 @@ Get-ScheduledTask -TaskName $FetchTaskName, $DigestTaskName |
 
 Write-Host ""
 Write-Host "Default registration uses the current user's interactive token."
-Write-Host "Scheduled PowerShell windows are hidden."
+Write-Host "Scheduled jobs launch through wscript.exe and do not create a console window."
 Write-Host "To run while logged out, open Task Scheduler and select"
 Write-Host "'Run whether user is logged on or not'; Windows will request your account password."
