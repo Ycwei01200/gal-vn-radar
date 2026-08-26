@@ -1,7 +1,8 @@
 param(
     [string]$ConfigPath,
     [string]$DatabasePath,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [string]$BackfillSince
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,6 +43,9 @@ $args = @(
 )
 if ($DryRun) {
     $args += "--dry-run"
+}
+if (-not [string]::IsNullOrWhiteSpace($BackfillSince)) {
+    $args += @("--backfill-since", $BackfillSince)
 }
 
 Push-Location $RepoRoot
