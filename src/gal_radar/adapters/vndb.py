@@ -283,6 +283,7 @@ class VNDBAdapter:
 
         for vn in vns:
             developer = vn.developers[0].name if vn.developers else None
+            developer_ids = [item.id for item in vn.developers]
             title = vn.alttitle or vn.title
 
             if self._discover_steam:
@@ -296,6 +297,7 @@ class VNDBAdapter:
                             vn_id=vn.id,
                             title=title,
                             developer=developer,
+                            developer_ids=developer_ids,
                         )
                     )
                     steam_count += int(len(follow.steam_apps) > before)
