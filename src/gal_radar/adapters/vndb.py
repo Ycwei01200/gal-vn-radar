@@ -73,6 +73,27 @@ class _VNDBQueryResponse(BaseModel):
     more: bool = False
 
 
+class _VNDBReleaseVN(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+
+
+class _VNDBRelease(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    vns: list[_VNDBReleaseVN] = Field(default_factory=list)
+    extlinks: list[_VNDBExtLink] = Field(default_factory=list)
+
+
+class _VNDBReleaseQueryResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    results: list[_VNDBRelease]
+    more: bool = False
+
+
 class _VNDBProducer(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -160,10 +181,25 @@ class VNDBAdapter:
             for vn in response.results:
                 follow.add_discovered_vn(vn.id)
             self._collect_vns(response.results, seen_vn_ids, vns)
-            logger.info("VNDB auto-discovered %d recent titles", len(response.results))
+            logger.info("VNDB auto-discovered %d release-sorted titles", len(response.results))
 
         follow.set_resolved_developer_ids(resolved_developer_ids)
-        self._discover_external_sources(follow, vns)
+
+        release_steam_apps: dict[str, set[int]] = {}
+        if self._discover_steam:
+            missing_direct_steam = [vn for vn in vns if not _steam_app_ids(vn.extlinks)]
+            if missing_direct_steam:
+                try:
+                    release_steam_apps = await self._discover_release_steam_apps(
+                        client,
+                        missing_direct_steam,
+                    )
+                except Exception:
+                    logger.exception(
+                        "VNDB release Steam discovery failed; continuing with VN extlinks"
+                    )
+
+        self._discover_external_sources(follow, vns, release_steam_apps)
         return [self._to_source_event(vn) for vn in vns]
 
     @staticmethod
@@ -177,17 +213,86 @@ class VNDBAdapter:
                 seen_vn_ids.add(vn.id)
                 output.append(vn)
 
-    def _discover_external_sources(self, follow: FollowConfig, vns: list[_VNDBVN]) -> None:
+    async def _discover_release_steam_apps(
+        self,
+        client: _HttpClient,
+        vns: list[_VNDBVN],
+    ) -> dict[str, set[int]]:
+        vn_ids = {vn.id for vn in vns}
+        if not vn_ids:
+            return {}
+
+        id_filters: list[list[Any]] = [["id", "=", vn_id] for vn_id in sorted(vn_ids)]
+        vn_filter: list[Any]
+        if len(id_filters) == 1:
+            vn_filter = id_filters[0]
+        else:
+            vn_filter = ["or", *id_filters]
+
+        filters: list[Any] = [
+            "and",
+            ["extlink", "=", "steam"],
+            ["vn", "=", vn_filter],
+        ]
+        mappings: dict[str, set[int]] = {}
+        page = 1
+
+        while True:
+            data = await self._post_json(
+                client,
+                "/release",
+                {
+                    "filters": filters,
+                    "fields": "vns{id},extlinks{name,id,url}",
+                    "sort": "id",
+                    "results": _MAX_RESULTS_PER_QUERY,
+                    "page": page,
+                },
+            )
+            try:
+                response = _VNDBReleaseQueryResponse.model_validate(data)
+            except ValidationError as exc:
+                raise SourceAdapterError("Malformed VNDB /release response") from exc
+
+            for release in response.results:
+                app_ids = _steam_app_ids(release.extlinks)
+                if not app_ids:
+                    continue
+                for linked_vn in release.vns:
+                    if linked_vn.id not in vn_ids:
+                        continue
+                    mappings.setdefault(linked_vn.id, set()).update(app_ids)
+
+            if not response.more:
+                break
+            page += 1
+
+        logger.info(
+            "VNDB release Steam discovery matched vns=%d apps=%d",
+            len(mappings),
+            len({app_id for app_ids in mappings.values() for app_id in app_ids}),
+        )
+        return mappings
+
+    def _discover_external_sources(
+        self,
+        follow: FollowConfig,
+        vns: list[_VNDBVN],
+        release_steam_apps: dict[str, set[int]] | None = None,
+    ) -> None:
         steam_count = 0
         itch_count = 0
         feed_count = 0
+        release_steam_apps = release_steam_apps or {}
+
         for vn in vns:
             developer = vn.developers[0].name if vn.developers else None
             title = vn.alttitle or vn.title
 
             if self._discover_steam:
-                app_id = _steam_app_id(vn.extlinks)
-                if app_id is not None:
+                app_ids = set(_steam_app_ids(vn.extlinks))
+                app_ids.update(release_steam_apps.get(vn.id, set()))
+                for app_id in sorted(app_ids):
                     before = len(follow.steam_apps)
                     follow.add_discovered_steam_app(
                         SteamAppConfig(
@@ -226,13 +331,12 @@ class VNDBAdapter:
                     )
                     feed_count += int(len(follow.feeds) > before)
 
-        if steam_count or itch_count or feed_count:
-            logger.info(
-                "auto-discovered external mappings steam=%d itch=%d feeds=%d",
-                steam_count,
-                itch_count,
-                feed_count,
-            )
+        logger.info(
+            "auto-discovered external mappings steam=%d itch=%d feeds=%d",
+            steam_count,
+            itch_count,
+            feed_count,
+        )
 
     async def _query_vn(
         self,
@@ -358,18 +462,30 @@ class VNDBAdapter:
         return ["search", "=", stripped]
 
 
-def _steam_app_id(extlinks: list[_VNDBExtLink]) -> int | None:
+def _steam_app_ids(extlinks: list[_VNDBExtLink]) -> list[int]:
+    app_ids: list[int] = []
     for link in extlinks:
-        if (link.name or "").casefold() != "steam":
-            continue
-        if isinstance(link.id, int) and link.id > 0:
-            return link.id
-        if isinstance(link.id, str) and link.id.isdigit() and int(link.id) > 0:
-            return int(link.id)
+        name_is_steam = (link.name or "").casefold() == "steam"
         match = re.search(r"store\.steampowered\.com/app/(\d+)", link.url, flags=re.IGNORECASE)
-        if match:
-            return int(match.group(1))
-    return None
+        if not name_is_steam and match is None:
+            continue
+
+        app_id: int | None = None
+        if isinstance(link.id, int) and link.id > 0:
+            app_id = link.id
+        elif isinstance(link.id, str) and link.id.isdigit() and int(link.id) > 0:
+            app_id = int(link.id)
+        elif match:
+            app_id = int(match.group(1))
+
+        if app_id is not None and app_id not in app_ids:
+            app_ids.append(app_id)
+    return app_ids
+
+
+def _steam_app_id(extlinks: list[_VNDBExtLink]) -> int | None:
+    app_ids = _steam_app_ids(extlinks)
+    return app_ids[0] if app_ids else None
 
 
 def _itch_game_url(extlinks: list[_VNDBExtLink]) -> str | None:
