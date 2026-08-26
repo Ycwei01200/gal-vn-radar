@@ -140,6 +140,17 @@ class Pipeline:
             feed_key = str(raw_feed_key).strip() if raw_feed_key else source
             grouped.setdefault(feed_key, []).append(event)
 
+        backfill_eligible = 0
+        backfill_seen_eligible = 0
+        backfill_duplicates = 0
+        backfill_status_counts = {
+            NotificationStatus.SENT.value: 0,
+            NotificationStatus.DIGEST.value: 0,
+            NotificationStatus.SKIPPED.value: 0,
+            NotificationStatus.PENDING.value: 0,
+            NotificationStatus.FAILED.value: 0,
+        }
+
         for feed_key, events in grouped.items():
             if not self._store.is_baseline_initialized(feed_key):
                 if self._dry_run:
@@ -161,6 +172,9 @@ class Pipeline:
             for event in events:
                 seen = self._store.is_source_item_seen(source, event.source_event_id)
                 backfill_candidate = self._is_backfill_candidate(event)
+                if backfill_candidate:
+                    backfill_eligible += 1
+                    backfill_seen_eligible += int(seen)
                 if seen and not backfill_candidate:
                     continue
                 try:
@@ -172,6 +186,8 @@ class Pipeline:
                     if record is None:
                         normalized = normalize_event(event)
                         duplicate = find_duplicate(self._store, normalized)
+                        if backfill_candidate and duplicate is not None:
+                            backfill_duplicates += 1
                         if (
                             not self._dry_run
                             and duplicate is not None
@@ -179,6 +195,10 @@ class Pipeline:
                         ):
                             self._store.mark_source_item_seen(source, event.source_event_id)
                         continue
+                    if backfill_candidate:
+                        backfill_status_counts[record.notification_status] = (
+                            backfill_status_counts.get(record.notification_status, 0) + 1
+                        )
                     if not self._dry_run and record.notification_status in _TERMINAL_STATUSES:
                         self._store.mark_source_item_seen(source, event.source_event_id)
                     processed.append(record)
@@ -188,15 +208,48 @@ class Pipeline:
                         event.source,
                         event.source_event_id,
                     )
+
+        if self._backfill_since is not None:
+            published_dates = [
+                published_date
+                for event in source_events
+                if (published_date := self._published_date(event)) is not None
+            ]
+            oldest = min(published_dates).isoformat() if published_dates else "none"
+            newest = max(published_dates).isoformat() if published_dates else "none"
+            logger.info(
+                "backfill summary source=%s since=%s fetched=%d eligible=%d "
+                "seen_eligible=%d duplicates=%d sent=%d digest=%d skipped=%d "
+                "pending=%d failed=%d oldest=%s newest=%s",
+                source,
+                self._backfill_since.isoformat(),
+                len(source_events),
+                backfill_eligible,
+                backfill_seen_eligible,
+                backfill_duplicates,
+                backfill_status_counts[NotificationStatus.SENT.value],
+                backfill_status_counts[NotificationStatus.DIGEST.value],
+                backfill_status_counts[NotificationStatus.SKIPPED.value],
+                backfill_status_counts[NotificationStatus.PENDING.value],
+                backfill_status_counts[NotificationStatus.FAILED.value],
+                oldest,
+                newest,
+            )
         return processed
 
-    def _is_backfill_candidate(self, event: SourceEvent) -> bool:
-        if self._backfill_since is None or event.published_at is None:
-            return False
+    def _published_date(self, event: SourceEvent) -> date | None:
         published_at = event.published_at
+        if published_at is None:
+            return None
         if published_at.tzinfo is not None and published_at.utcoffset() is not None:
             published_at = published_at.astimezone(UTC)
-        return published_at.date() >= self._backfill_since
+        return published_at.date()
+
+    def _is_backfill_candidate(self, event: SourceEvent) -> bool:
+        if self._backfill_since is None:
+            return False
+        published_date = self._published_date(event)
+        return published_date is not None and published_date >= self._backfill_since
 
     async def _preview_one(self, source_event: SourceEvent) -> EventRecord | None:
         normalized = normalize_event(source_event)
