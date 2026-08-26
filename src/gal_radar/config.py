@@ -25,6 +25,7 @@ class SteamAppConfig(BaseModel):
     vn_id: str
     title: str
     developer: str | None = None
+    developer_ids: list[str] = Field(default_factory=list)
 
 
 class ItchAppConfig(BaseModel):
