@@ -86,8 +86,10 @@ class SteamNewsAdapter:
                 events.extend(
                     self._to_source_event(app, item) for item in response.appnews.newsitems
                 )
+            except SourceAdapterError as exc:
+                logger.warning("Steam app unavailable app_id=%s error=%s", app.app_id, exc)
             except Exception:
-                logger.exception("Steam app failed app_id=%s", app.app_id)
+                logger.exception("Steam app failed unexpectedly app_id=%s", app.app_id)
         return events
 
     async def _get_news(self, client: _HttpClient, app_id: int) -> _SteamNewsResponse:
@@ -102,7 +104,13 @@ class SteamNewsAdapter:
                 },
                 timeout=self._timeout,
             )
+            if response.status_code in {403, 404}:
+                raise SourceAdapterError(
+                    f"Steam News unavailable HTTP {response.status_code} app_id={app_id}"
+                )
             response.raise_for_status()
+        except SourceAdapterError:
+            raise
         except httpx.TimeoutException as exc:
             raise SourceAdapterError(f"Steam News request timed out app_id={app_id}") from exc
         except httpx.HTTPError as exc:
