@@ -143,10 +143,13 @@ class SteamNewsAdapter:
             metadata["release_date"] = release_date
 
         developer_names = [app.developer] if app.developer else []
+        developer_id = app.developer_ids[0] if app.developer_ids else None
         return SourceEvent(
             source=self.name,
             source_event_id=f"{app.app_id}:{item.gid}",
             vn_id=app.vn_id,
+            developer_id=developer_id,
+            developer_ids=app.developer_ids,
             developer_names=developer_names,
             tags=item.tags,
             event_type=event_type,
