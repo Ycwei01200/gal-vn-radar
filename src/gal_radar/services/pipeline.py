@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import UTC, date
 
 from gal_radar.adapters.base import SourceAdapter
 from gal_radar.config import AppConfig
@@ -12,7 +12,7 @@ from gal_radar.notifications.telegram import render_zh_tw_notification
 from gal_radar.services.change_detection import detect_change, snapshot_from_event
 from gal_radar.services.deduplicate import find_duplicate
 from gal_radar.services.normalize import normalize_event
-from gal_radar.services.ranking import score_event
+from gal_radar.services.ranking import ScoreResult, score_event
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,15 @@ class Pipeline:
         store: EventStore,
         adapters: list[SourceAdapter],
         notifier: NotificationSink,
+        dry_run: bool = False,
+        backfill_since: date | None = None,
     ) -> None:
         self._config = config
         self._store = store
         self._adapters = adapters
         self._notifier = notifier
+        self._dry_run = dry_run
+        self._backfill_since = backfill_since
         self.successful_source_count = 0
         self.failed_source_count = 0
 
@@ -64,6 +68,13 @@ class Pipeline:
     ) -> list[EventRecord]:
         processed: list[EventRecord] = []
         if not self._store.is_baseline_initialized(source):
+            if self._dry_run:
+                logger.info(
+                    "dry-run: snapshot baseline not persisted source=%s events=%d",
+                    source,
+                    len(source_events),
+                )
+                return processed
             try:
                 for source_event in source_events:
                     self._store.save_snapshot(source, snapshot_from_event(source_event))
@@ -84,8 +95,16 @@ class Pipeline:
                     baseline_initialized=True,
                 )
                 if changed_event is None:
-                    self._store.save_snapshot(source, snapshot_from_event(source_event))
+                    if not self._dry_run:
+                        self._store.save_snapshot(source, snapshot_from_event(source_event))
                     continue
+
+                if self._dry_run:
+                    record = await self._preview_one(changed_event)
+                    if record is not None:
+                        processed.append(record)
+                    continue
+
                 record = await self._process_one(changed_event)
                 if record is None:
                     normalized = normalize_event(changed_event)
@@ -123,6 +142,13 @@ class Pipeline:
 
         for feed_key, events in grouped.items():
             if not self._store.is_baseline_initialized(feed_key):
+                if self._dry_run:
+                    logger.info(
+                        "dry-run: feed baseline not persisted feed=%s items=%d",
+                        feed_key,
+                        len(events),
+                    )
+                    continue
                 try:
                     for event in events:
                         self._store.mark_source_item_seen(source, event.source_event_id)
@@ -133,20 +159,27 @@ class Pipeline:
                 continue
 
             for event in events:
-                if self._store.is_source_item_seen(source, event.source_event_id):
+                seen = self._store.is_source_item_seen(source, event.source_event_id)
+                backfill_candidate = self._is_backfill_candidate(event)
+                if seen and not backfill_candidate:
                     continue
                 try:
-                    record = await self._process_one(event)
+                    if self._dry_run:
+                        record = await self._preview_one(event)
+                    else:
+                        record = await self._process_one(event)
+
                     if record is None:
                         normalized = normalize_event(event)
                         duplicate = find_duplicate(self._store, normalized)
                         if (
-                            duplicate is not None
+                            not self._dry_run
+                            and duplicate is not None
                             and duplicate.notification_status in _TERMINAL_STATUSES
                         ):
                             self._store.mark_source_item_seen(source, event.source_event_id)
                         continue
-                    if record.notification_status in _TERMINAL_STATUSES:
+                    if not self._dry_run and record.notification_status in _TERMINAL_STATUSES:
                         self._store.mark_source_item_seen(source, event.source_event_id)
                     processed.append(record)
                 except Exception:
@@ -156,6 +189,97 @@ class Pipeline:
                         event.source_event_id,
                     )
         return processed
+
+    def _is_backfill_candidate(self, event: SourceEvent) -> bool:
+        if self._backfill_since is None or event.published_at is None:
+            return False
+        published_at = event.published_at
+        if published_at.tzinfo is not None and published_at.utcoffset() is not None:
+            published_at = published_at.astimezone(UTC)
+        return published_at.date() >= self._backfill_since
+
+    async def _preview_one(self, source_event: SourceEvent) -> EventRecord | None:
+        normalized = normalize_event(source_event)
+        duplicate = find_duplicate(self._store, normalized)
+        if duplicate is not None:
+            if not self._event_type_enabled(EventType(duplicate.event_type)):
+                return None
+            if duplicate.notification_status == NotificationStatus.SENT.value:
+                return None
+            retry_statuses = {
+                NotificationStatus.PENDING.value,
+                NotificationStatus.FAILED.value,
+            }
+            if (
+                duplicate.relevance_score >= self._config.notification.immediate_threshold
+                and duplicate.notification_status in retry_statuses
+            ):
+                await self._preview_delivery(duplicate)
+                return duplicate
+            return None
+
+        score = score_event(normalized, self._config)
+        status = self._preview_status(source_event, normalized.event_type, score)
+        record = EventRecord(
+            source=normalized.source,
+            source_event_id=normalized.source_event_id,
+            vn_id=normalized.vn_id,
+            developer_id=normalized.developer_id,
+            developer_names=normalized.developer_names,
+            tags=normalized.tags,
+            event_type=normalized.event_type.value,
+            title=normalized.title,
+            summary=normalized.summary,
+            url=normalized.url,
+            image_url=normalized.image_url,
+            published_at=normalized.published_at,
+            discovered_at=normalized.discovered_at,
+            normalized_identity=normalized.normalized_identity,
+            content_hash=normalized.content_hash,
+            metadata_json=normalized.metadata,
+            relevance_score=score.score,
+            relevance_reasons=list(score.reasons),
+            notification_status=status.value,
+            corroborating_sources=[],
+        )
+        if status is NotificationStatus.PENDING:
+            await self._preview_delivery(record)
+        return record
+
+    def _preview_status(
+        self,
+        source_event: SourceEvent,
+        event_type: EventType,
+        score: ScoreResult,
+    ) -> NotificationStatus:
+        if self._is_stale_snapshot_release(source_event):
+            return NotificationStatus.SKIPPED
+        if not self._event_type_enabled(event_type):
+            return NotificationStatus.SKIPPED
+        if score.score >= self._config.notification.immediate_threshold:
+            return NotificationStatus.PENDING
+        if score.score >= self._config.notification.digest_threshold:
+            return NotificationStatus.DIGEST
+        return NotificationStatus.SKIPPED
+
+    async def _preview_delivery(self, record: EventRecord) -> None:
+        message = render_zh_tw_notification(
+            record,
+            source_priority=self._config.preferences.source_priority,
+        )
+        try:
+            try:
+                await self._notifier.send(message, image_url=record.image_url)
+            except TypeError as exc:
+                if "image_url" not in str(exc):
+                    raise
+                await self._notifier.send(message)
+        except Exception:
+            logger.exception(
+                "dry-run notification preview failed source=%s source_event_id=%s",
+                record.source,
+                record.source_event_id,
+            )
 
     async def _process_one(self, source_event: SourceEvent) -> EventRecord | None:
         normalized = normalize_event(source_event)
