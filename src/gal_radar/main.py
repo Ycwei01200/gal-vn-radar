@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import os
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -21,6 +22,13 @@ from gal_radar.services.runtime import backup_sqlite, configure_logging, status_
 logger = logging.getLogger(__name__)
 
 
+def _date_argument(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected YYYY-MM-DD") from exc
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gal-radar")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -29,7 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument(
         "--dry-run",
         action="store_true",
-        help="Render notifications without Telegram",
+        help="Render notifications without Telegram or database mutations",
+    )
+    fetch.add_argument(
+        "--backfill-since",
+        type=_date_argument,
+        help="Reprocess feed items published on or after YYYY-MM-DD even if already seen",
     )
     fetch.add_argument("--config", default="config.yaml", help="Path to YAML configuration")
     fetch.add_argument("--database", default="data/gal_radar.db", help="Path to SQLite database")
@@ -69,7 +82,13 @@ def _store(database_path: str) -> EventStore:
     return store
 
 
-async def run_fetch(*, config_path: str, database_path: str, dry_run: bool) -> int:
+async def run_fetch(
+    *,
+    config_path: str,
+    database_path: str,
+    dry_run: bool,
+    backfill_since: date | None = None,
+) -> int:
     config = load_config(config_path)
     store = _store(database_path)
     notifier = _notifier(
@@ -92,7 +111,14 @@ async def run_fetch(*, config_path: str, database_path: str, dry_run: bool) -> i
     if config.discovery.enabled or config.follow.feeds:
         adapters.append(RSSAdapter())
 
-    pipeline = Pipeline(config=config, store=store, adapters=adapters, notifier=notifier)
+    pipeline = Pipeline(
+        config=config,
+        store=store,
+        adapters=adapters,
+        notifier=notifier,
+        dry_run=dry_run,
+        backfill_since=backfill_since,
+    )
     await pipeline.run()
     if pipeline.successful_source_count == 0 and pipeline.failed_source_count > 0:
         logger.error("fetch failed: all configured adapters failed")
@@ -194,6 +220,7 @@ def main() -> None:
                     config_path=args.config,
                     database_path=args.database,
                     dry_run=args.dry_run,
+                    backfill_since=args.backfill_since,
                 )
             )
         elif args.command == "digest":
