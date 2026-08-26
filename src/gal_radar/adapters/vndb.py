@@ -223,11 +223,7 @@ class VNDBAdapter:
             return {}
 
         id_filters: list[list[Any]] = [["id", "=", vn_id] for vn_id in sorted(vn_ids)]
-        vn_filter: list[Any]
-        if len(id_filters) == 1:
-            vn_filter = id_filters[0]
-        else:
-            vn_filter = ["or", *id_filters]
+        vn_filter: list[Any] = id_filters[0] if len(id_filters) == 1 else ["or", *id_filters]
 
         filters: list[Any] = [
             "and",
