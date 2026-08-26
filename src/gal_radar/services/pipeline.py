@@ -13,7 +13,10 @@ from gal_radar.services.backfill import BackfillStats, is_backfill_candidate
 from gal_radar.services.change_detection import detect_change, snapshot_from_event
 from gal_radar.services.deduplicate import find_duplicate
 from gal_radar.services.normalize import normalize_event
-from gal_radar.services.notification_policy import choose_notification_status, is_stale_snapshot_release
+from gal_radar.services.notification_policy import (
+    choose_notification_status,
+    is_stale_snapshot_release,
+)
 from gal_radar.services.ranking import score_event
 
 logger = logging.getLogger(__name__)
@@ -211,7 +214,11 @@ class Pipeline:
         stats: BackfillStats | None,
     ) -> EventRecord | None:
         try:
-            record = await (self._preview_one(event) if self._dry_run else self._process_one(event))
+            if self._dry_run:
+                record = await self._preview_one(event)
+            else:
+                record = await self._process_one(event)
+
             if record is None:
                 normalized = normalize_event(event)
                 duplicate = find_duplicate(self._store, normalized)
@@ -370,7 +377,8 @@ class Pipeline:
             if status is NotificationStatus.SKIPPED:
                 if is_stale_snapshot_release(source_event, self._config):
                     logger.info(
-                        "notification skipped event_id=%s reason=stale_snapshot_release release_date=%s",
+                        "notification skipped event_id=%s reason=stale_snapshot_release "
+                        "release_date=%s",
                         record.id,
                         source_event.metadata.get("release_date"),
                     )
