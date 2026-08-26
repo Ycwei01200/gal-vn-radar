@@ -89,7 +89,7 @@ def test_vndb_developer_name_is_resolved_before_querying_vns() -> None:
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            events = await VNDBAdapter(client).fetch_events(follow)
+            events = await VNDBAdapter(client, discover_steam=False).fetch_events(follow)
 
         assert paths == ["/kana/producer", "/kana/vn"]
         assert payloads["/kana/producer"]["filters"] == ["search", "=", "枕"]
@@ -167,13 +167,112 @@ def test_vndb_auto_discovery_builds_external_source_mappings() -> None:
     asyncio.run(run())
 
 
+def test_vndb_auto_discovery_falls_back_to_release_steam_links() -> None:
+    async def run() -> None:
+        follow = FollowConfig()
+        observed_release_payload: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content.decode("utf-8"))
+            if request.url.path.endswith("/vn"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {
+                                "id": "v50001",
+                                "title": "Release-linked VN",
+                                "released": "2026-09-15",
+                                "developers": [{"id": "p2", "name": "Release Dev"}],
+                                "tags": [],
+                                "extlinks": [],
+                            }
+                        ]
+                    },
+                    request=request,
+                )
+
+            assert request.url.path.endswith("/release")
+            observed_release_payload.update(payload)
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": "r90001",
+                            "vns": [{"id": "v50001"}],
+                            "extlinks": [
+                                {
+                                    "name": "steam",
+                                    "id": 987654,
+                                    "url": "https://store.steampowered.com/app/987654/",
+                                }
+                            ],
+                        }
+                    ],
+                    "more": False,
+                },
+                request=request,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = VNDBAdapter(client, discovery_enabled=True, discovery_results=50)
+            await adapter.fetch_events(follow)
+
+        assert observed_release_payload["filters"] == [
+            "and",
+            ["extlink", "=", "steam"],
+            ["vn", "=", ["id", "=", "v50001"]],
+        ]
+        assert observed_release_payload["fields"] == "vns{id},extlinks{name,id,url}"
+        assert len(follow.steam_apps) == 1
+        assert follow.steam_apps[0].app_id == 987654
+        assert follow.steam_apps[0].vn_id == "v50001"
+
+    asyncio.run(run())
+
+
+def test_release_steam_discovery_failure_does_not_fail_vndb_fetch() -> None:
+    async def run() -> None:
+        follow = FollowConfig()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/vn"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {
+                                "id": "v50002",
+                                "title": "Fallback-safe VN",
+                                "released": "2026-09-20",
+                                "developers": [],
+                                "tags": [],
+                                "extlinks": [],
+                            }
+                        ]
+                    },
+                    request=request,
+                )
+            return httpx.Response(500, json={"error": "failure"}, request=request)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = VNDBAdapter(client, discovery_enabled=True)
+            events = await adapter.fetch_events(follow)
+
+        assert [event.vn_id for event in events] == ["v50002"]
+        assert follow.steam_apps == []
+
+    asyncio.run(run())
+
+
 def test_malformed_vndb_response_raises_source_error() -> None:
     async def run() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"results": "not-a-list"}, request=request)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            adapter = VNDBAdapter(client)
+            adapter = VNDBAdapter(client, discover_steam=False)
             with pytest.raises(SourceAdapterError, match="Malformed VNDB /vn response"):
                 await adapter.fetch_events(FollowConfig(visual_novels=["v20431"]))
 
@@ -202,7 +301,7 @@ def test_invalid_optional_vndb_image_url_raises_source_error() -> None:
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            adapter = VNDBAdapter(client)
+            adapter = VNDBAdapter(client, discover_steam=False)
             with pytest.raises(SourceAdapterError, match="Malformed VNDB /vn response"):
                 await adapter.fetch_events(FollowConfig(visual_novels=["v20431"]))
 
@@ -215,7 +314,7 @@ def test_vndb_timeout_is_wrapped() -> None:
             raise httpx.ReadTimeout("timeout", request=request)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            adapter = VNDBAdapter(client)
+            adapter = VNDBAdapter(client, discover_steam=False)
             with pytest.raises(SourceAdapterError, match="timed out"):
                 await adapter.fetch_events(FollowConfig(visual_novels=["v20431"]))
 
@@ -257,7 +356,7 @@ def test_vndb_rate_limit_retries_then_succeeds() -> None:
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            adapter = VNDBAdapter(client, sleep=fake_sleep)
+            adapter = VNDBAdapter(client, sleep=fake_sleep, discover_steam=False)
             events = await adapter.fetch_events(FollowConfig(visual_novels=["v20431"]))
 
         assert len(events) == 1
