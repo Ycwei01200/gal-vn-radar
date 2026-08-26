@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gal_radar.config import SteamAppConfig, load_config
+from gal_radar.config import FollowConfig, SteamAppConfig, load_config
 
 
 def test_invalid_notification_thresholds_fail_clearly(tmp_path) -> None:
@@ -69,15 +69,11 @@ def test_steam_app_mapping_is_parsed_from_yaml(tmp_path) -> None:
 
 
 def test_discovered_steam_app_enriches_existing_mapping() -> None:
-    path_config = load_config_from_text(
-        "follow:\n"
-        "  steam_apps:\n"
-        "    - app_id: 123456\n"
-        "      vn_id: v20431\n"
-        "      title: サクラノ刻\n"
+    follow = FollowConfig(
+        steam_apps=[SteamAppConfig(app_id=123456, vn_id="v20431", title="サクラノ刻")]
     )
 
-    path_config.follow.add_discovered_steam_app(
+    follow.add_discovered_steam_app(
         SteamAppConfig(
             app_id=123456,
             vn_id="v20431",
@@ -87,19 +83,10 @@ def test_discovered_steam_app_enriches_existing_mapping() -> None:
         )
     )
 
-    assert len(path_config.follow.steam_apps) == 1
-    mapping = path_config.follow.steam_apps[0]
+    assert len(follow.steam_apps) == 1
+    mapping = follow.steam_apps[0]
     assert mapping.developer == "Makura"
     assert mapping.developer_ids == ["p30"]
-
-
-def load_config_from_text(text: str):
-    from tempfile import NamedTemporaryFile
-
-    with NamedTemporaryFile("w", suffix=".yaml", encoding="utf-8", delete=False) as handle:
-        handle.write(text)
-        path = handle.name
-    return load_config(path)
 
 
 def test_invalid_steam_app_id_fails_configuration(tmp_path) -> None:
