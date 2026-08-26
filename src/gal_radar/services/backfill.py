@@ -43,7 +43,11 @@ class BackfillStats:
         since: date,
         events: list[SourceEvent],
     ) -> BackfillStats:
-        dates = [event_date for event in events if (event_date := published_date(event)) is not None]
+        dates = [
+            event_date
+            for event in events
+            if (event_date := published_date(event)) is not None
+        ]
         return cls(
             source=source,
             since=since,
