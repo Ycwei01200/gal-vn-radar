@@ -94,7 +94,21 @@ class FollowConfig(BaseModel):
             self._discovered_vn_ids.add(stripped)
 
     def add_discovered_steam_app(self, app: SteamAppConfig) -> None:
-        if any(existing.app_id == app.app_id for existing in self.steam_apps):
+        for index, existing in enumerate(self.steam_apps):
+            if existing.app_id != app.app_id:
+                continue
+            merged_ids = list(existing.developer_ids)
+            for developer_id in app.developer_ids:
+                if developer_id not in merged_ids:
+                    merged_ids.append(developer_id)
+            self.steam_apps[index] = existing.model_copy(
+                update={
+                    "vn_id": existing.vn_id or app.vn_id,
+                    "title": existing.title or app.title,
+                    "developer": existing.developer or app.developer,
+                    "developer_ids": merged_ids,
+                }
+            )
             return
         self.steam_apps.append(app)
 
